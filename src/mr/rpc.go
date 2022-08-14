@@ -34,14 +34,14 @@ type ReduceStruct struct {
 }
 
 type RequestMissionArgs struct {
-	status  int
-	Channel chan int
+	Status int
+	// Channel chan int
 }
 type RequestMissionReply struct {
-	flag   string
-	id     int
-	m_args MapStruct
-	r_args ReduceStruct
+	Flag string
+	ID   int
+	// m_args MapStruct
+	// r_args ReduceStruct
 }
 
 type CallReply struct {
@@ -60,12 +60,4 @@ func masterSock() string {
 	s := "/var/tmp/824-mr-"
 	s += strconv.Itoa(os.Getuid())
 	return s
-}
-
-type ExampleArgs struct {
-	X int
-}
-
-type ExampleReply struct {
-	Y int
 }

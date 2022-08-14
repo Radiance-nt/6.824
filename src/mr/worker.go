@@ -5,6 +5,7 @@ import (
 	"hash/fnv"
 	"log"
 	"net/rpc"
+	"time"
 )
 
 //
@@ -28,6 +29,9 @@ func ihash(key string) int {
 //
 // main/mrworker.go calls this function.
 //
+func start_worker() {
+	RequestMission()
+}
 func Worker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
 	// flag := "map"
@@ -47,7 +51,10 @@ func Worker(mapf func(string, string) []KeyValue,
 	// Your worker implementation here.
 
 	// uncomment to send the Example RPC to the master.
-	CallExample()
+	for i := 1; i <= 10; i++ {
+		go start_worker()
+	}
+	time.Sleep(time.Duration(5) * time.Second)
 
 }
 
@@ -57,18 +64,10 @@ func Worker(mapf func(string, string) []KeyValue,
 // the RPC argument and reply types are defined in rpc.go.
 //
 func RequestMission() {
-	args := RequestMissionArgs{}
+	args := RequestMissionArgs{Status: FREE}
 	reply := RequestMissionReply{}
 	call("Master.AllocateMission", &args, &reply)
-	fmt.Printf("reply.Y %v\n", reply)
-}
-
-func CallExample() {
-	args := ExampleArgs{}
-	args.X = 99
-	reply := ExampleReply{}
-	call("Master.Example", &args, &reply)
-	fmt.Printf("reply.Y %v\n", reply.Y)
+	fmt.Printf("[Worker] %v\n", reply.ID)
 }
 
 //

@@ -33,30 +33,25 @@ type Master struct {
 //
 // the RPC argument and reply types are defined in rpc.go.
 //
-func (m *Master) Example(args *ExampleArgs, reply *ExampleReply) error {
-	reply.Y = args.X + 1
-	return nil
-}
-
 func (m *Master) AllocateMission(args *RequestMissionArgs, reply *RequestMissionReply) error {
-	if args.status == FREE {
+	if args.Status == FREE {
 		if m.status == START {
-			reply.flag = "map"
-			reply.id = m.counter
+			reply.Flag = "map"
+			reply.ID = m.counter
 			m.mutex.Lock()
 			m.counter += 1
-			fmt.Printf("[Master] Allocate: %d task complete in Map", m.counter)
+			fmt.Printf("[Master] Allocate: %d task complete in Map\n", m.counter)
 			if m.counter == m.workers_num {
 				m.counter = 0
 				m.status = MAP_COMPLETE
 			}
 			m.mutex.Unlock()
 		} else if m.status == MAP_COMPLETE {
-			reply.flag = "reduce"
-			reply.id = m.counter
+			reply.Flag = "reduce"
+			reply.ID = m.counter
 			m.mutex.Lock()
 			m.counter += 1
-			fmt.Printf("[Master] Allocate: %d task complete in Reduce", m.counter)
+			fmt.Printf("[Master] Allocate: %d task complete in Reduce\n", m.counter)
 			if m.counter == m.workers_num {
 				m.counter = 0
 				m.status = REDUCE_COMPLETE
@@ -105,7 +100,7 @@ func MakeMaster(files []string, nReduce int) *Master {
 	m := Master{}
 	m.workers_num = nReduce
 	m.status = START
-
+	fmt.Printf("[MakeMaster]: %d workers in total\n", nReduce)
 	// Your code here.
 
 	m.server()
