@@ -39,6 +39,7 @@ type RequestMissionArgs struct {
 }
 type RequestMissionReply struct {
 	flag   string
+	id     int
 	m_args MapStruct
 	r_args ReduceStruct
 }

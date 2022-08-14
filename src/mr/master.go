@@ -1,11 +1,13 @@
 package mr
 
 import (
+	"fmt"
 	"log"
 	"net"
 	"net/http"
 	"net/rpc"
 	"os"
+	"sync"
 )
 
 const (
@@ -16,16 +18,12 @@ const (
 	REDUCE_COMPLETE
 )
 
-type meta struct {
-	heading string
-}
-
 type Master struct {
 	// Your definitions here.
-	workers_num  int
-	m_status     int
-	w_status     []int
-	meta_message meta
+	mutex       sync.Mutex
+	workers_num int
+	status      int
+	counter     int
 }
 
 // Your code here -- RPC handlers for the worker to call.
@@ -42,11 +40,31 @@ func (m *Master) Example(args *ExampleArgs, reply *ExampleReply) error {
 
 func (m *Master) AllocateMission(args *RequestMissionArgs, reply *RequestMissionReply) error {
 	if args.status == FREE {
-		if m.m_status == START {
+		if m.status == START {
 			reply.flag = "map"
-		} else if m.m_status == MAP_COMPLETE {
+			reply.id = m.counter
+			m.mutex.Lock()
+			m.counter += 1
+			fmt.Printf("[Master] Allocate: %d task complete in Map", m.counter)
+			if m.counter == m.workers_num {
+				m.counter = 0
+				m.status = MAP_COMPLETE
+			}
+			m.mutex.Unlock()
+		} else if m.status == MAP_COMPLETE {
 			reply.flag = "reduce"
+			reply.id = m.counter
+			m.mutex.Lock()
+			m.counter += 1
+			fmt.Printf("[Master] Allocate: %d task complete in Reduce", m.counter)
+			if m.counter == m.workers_num {
+				m.counter = 0
+				m.status = REDUCE_COMPLETE
+			}
+			m.mutex.Unlock()
 		}
+	} else {
+		fmt.Println("[Master] Allocate: Args.status is not FREE")
 	}
 	return nil
 }
@@ -73,19 +91,20 @@ func (m *Master) server() {
 //
 func (m *Master) Done() bool {
 	ret := false
-
-	// Your code here.
-
+	if m.status == REDUCE_COMPLETE {
+		ret = true
+	}
 	return ret
 }
 
-//
 // create a Master.
 // main/mrmaster.go calls this function.
 // nReduce is the number of reduce tasks to use.
 //
 func MakeMaster(files []string, nReduce int) *Master {
 	m := Master{}
+	m.workers_num = nReduce
+	m.status = START
 
 	// Your code here.
 
