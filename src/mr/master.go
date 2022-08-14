@@ -1,15 +1,31 @@
 package mr
 
-import "log"
-import "net"
-import "os"
-import "net/rpc"
-import "net/http"
+import (
+	"log"
+	"net"
+	"net/http"
+	"net/rpc"
+	"os"
+)
 
+const (
+	START = iota
+	MAPPING
+	MAP_COMPLETE
+	REDUCING
+	REDUCE_COMPLETE
+)
+
+type meta struct {
+	heading string
+}
 
 type Master struct {
 	// Your definitions here.
-
+	workers_num  int
+	m_status     int
+	w_status     []int
+	meta_message meta
 }
 
 // Your code here -- RPC handlers for the worker to call.
@@ -24,6 +40,16 @@ func (m *Master) Example(args *ExampleArgs, reply *ExampleReply) error {
 	return nil
 }
 
+func (m *Master) AllocateMission(args *RequestMissionArgs, reply *RequestMissionReply) error {
+	if args.status == FREE {
+		if m.m_status == START {
+			reply.flag = "map"
+		} else if m.m_status == MAP_COMPLETE {
+			reply.flag = "reduce"
+		}
+	}
+	return nil
+}
 
 //
 // start a thread that listens for RPCs from worker.go
@@ -50,7 +76,6 @@ func (m *Master) Done() bool {
 
 	// Your code here.
 
-
 	return ret
 }
 
@@ -63,7 +88,6 @@ func MakeMaster(files []string, nReduce int) *Master {
 	m := Master{}
 
 	// Your code here.
-
 
 	m.server()
 	return &m
