@@ -34,14 +34,16 @@ type ReduceStruct struct {
 }
 
 type RequestMissionArgs struct {
-	Status int
+	Status   int
+	ID       int
+	Complete int
 	// Channel chan int
 }
 type RequestMissionReply struct {
-	Flag string
-	ID   int
-	// m_args MapStruct
-	// r_args ReduceStruct
+	Flag   string // Task type, choice: Map or Reduce
+	ID     int
+	m_args MapStruct
+	r_args ReduceStruct
 }
 
 type CallReply struct {

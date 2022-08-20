@@ -5,6 +5,7 @@ import (
 	"hash/fnv"
 	"log"
 	"net/rpc"
+	"os"
 	"time"
 )
 
@@ -29,32 +30,44 @@ func ihash(key string) int {
 //
 // main/mrworker.go calls this function.
 //
-func start_worker() {
-	RequestMission()
-}
+
 func Worker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
-	// flag := "map"
-	// var str1, str2, str_reduce string
-	// var strs []string
+	sleep_count := 0
+	args := RequestMissionArgs{Status: FREE}
+	for {
+		reply := RequestMission(args)
+		if reply.ID == -1 {
+			sleep_count += 1
+			if sleep_count >= 3 {
+				fmt.Printf("[Worker unkonwn]: %d sleep exit\n", sleep_count)
+				os.Exit(0)
+			}
+			fmt.Printf("[Worker unkonwn]: %d sleep\n", sleep_count)
+			time.Sleep(time.Duration(5) * time.Second)
 
-	// // wait for master
-	// if flag == " map" {
-	// 	kv_pairs := mapf(str1, str2)
-	// 	_ = kv_pairs
-	// } else if flag == " reduce" {
-	// 	result := reducef(str_reduce, strs)
+			continue
+		}
+		if reply.Flag == "map" {
+			fmt.Printf("[Worker %d]: Map\n", reply.ID)
+			inter_kv := mapf(reply.m_args.str1, reply.m_args.str2)
+			_ = inter_kv
+			args = RequestMissionArgs{Status: FREE, ID: reply.ID, Complete: MAP_SUCEESS}
+		} else if reply.Flag == "reduce" {
+			fmt.Printf("[Worker %d]: Reduce\n", reply.ID)
+			res := mapf(reply.m_args.str1, reply.m_args.str2)
+			_ = res
+			args = RequestMissionArgs{Status: FREE, ID: reply.ID, Complete: REDUCE_SUCEESS}
 
-	// 	// send result back
-	// }
+		} else {
+			fmt.Println("[Worker] ERROR: Reply: ", reply.Flag)
+			os.Exit(0)
+		}
 
-	// Your worker implementation here.
-
-	// uncomment to send the Example RPC to the master.
-	for i := 1; i <= 10; i++ {
-		go start_worker()
 	}
-	time.Sleep(time.Duration(5) * time.Second)
+	// for i := 1; i <= 10; i++ {
+	// 	go start_worker()
+	// }
 
 }
 
@@ -63,11 +76,13 @@ func Worker(mapf func(string, string) []KeyValue,
 //
 // the RPC argument and reply types are defined in rpc.go.
 //
-func RequestMission() {
-	args := RequestMissionArgs{Status: FREE}
+func RequestMission(args RequestMissionArgs) RequestMissionReply {
 	reply := RequestMissionReply{}
-	call("Master.AllocateMission", &args, &reply)
-	fmt.Printf("[Worker] %v\n", reply.ID)
+	err := call("Master.AllocateMission", &args, &reply)
+	if !err {
+		os.Exit(0)
+	}
+	return reply
 }
 
 //
