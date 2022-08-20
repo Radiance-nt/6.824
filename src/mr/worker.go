@@ -1,12 +1,14 @@
 package mr
 
 import (
+	"bufio"
 	"fmt"
 	"hash/fnv"
 	"io/ioutil"
 	"log"
 	"net/rpc"
 	"os"
+	"sort"
 	"time"
 )
 
@@ -27,6 +29,11 @@ type KeyValue struct {
 }
 type ByKey []KeyValue
 
+// for sorting by key.
+func (a ByKey) Len() int           { return len(a) }
+func (a ByKey) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
+func (a ByKey) Less(i, j int) bool { return a[i].Key < a[j].Key }
+
 //
 // use ihash(key) % NReduce to choose the reduce
 // task number for each KeyValue emitted by Map.
@@ -44,11 +51,11 @@ func map_handler(mapf func(string, string) []KeyValue,
 	reply RequestMissionReply) {
 
 	inter_name := "mr-inter"
-	var f *os.File
+	var file *os.File
 	var err error
 	intermediate := []KeyValue{}
 	filename := reply.M_args.Str1
-	file, err := os.Open(filename)
+	file, err = os.Open(filename)
 	if err != nil {
 		log.Fatalf("cannot open %v", filename)
 	}
@@ -59,22 +66,27 @@ func map_handler(mapf func(string, string) []KeyValue,
 	file.Close()
 	kva := mapf(reply.M_args.Str1, string(content))
 	intermediate = append(intermediate, kva...)
-
+	sort.Sort(ByKey(intermediate))
 	// TODO: Can be optimized with a buffer
 	for _, v := range intermediate {
-		filename := fmt.Sprintf("%s-%d", inter_name, ihash(v.Key))
+		filename := fmt.Sprintf("%s-%d", inter_name, ihash(v.Key)%reply.MetaMessage.Reduce_num)
 		for {
 			if checkFileIsExist(filename) {
-				f, err = os.OpenFile(filename, os.O_APPEND, 0666)
+				file, err = os.OpenFile(filename, os.O_WRONLY|os.O_APPEND, 0666)
 			} else {
-				f, err = os.Create(filename)
+				file, err = os.Create(filename)
 			}
 			if err == nil {
+				defer file.Close()
 				break
 			}
 			fmt.Printf("[Worker %d]: Open file error, retried..\n", reply.ID)
 		}
-		f.WriteString(v.Key)
+		content := fmt.Sprintf("%s %s\n", v.Key, v.Value)
+		write := bufio.NewWriter(file)
+		write.WriteString(content)
+		write.Flush()
+		// f.WriteString(content)
 	}
 }
 

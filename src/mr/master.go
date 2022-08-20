@@ -52,6 +52,7 @@ func (m *Master) select_task(reply *RequestMissionReply, task_type string) {
 	i := 0
 	reply.Flag = task_type
 	reply.ID = -1
+	reply.MetaMessage = Meta{Map_num: m.nMap, Reduce_num: m.nReduce}
 	if task_type == "map" {
 		task_num = m.nMap
 		task_ptr = &m.task_status[0]

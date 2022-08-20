@@ -24,6 +24,10 @@ const (
 	REDUCE_FAILED
 )
 
+type Meta struct {
+	Map_num    int
+	Reduce_num int
+}
 type MapStruct struct {
 	Str1 string
 	Str2 string
@@ -40,10 +44,11 @@ type RequestMissionArgs struct {
 	// Channel chan int
 }
 type RequestMissionReply struct {
-	Flag   string // Task type, choice: Map or Reduce
-	ID     int
-	M_args MapStruct
-	R_args ReduceStruct
+	Flag        string // Task type, choice: Map or Reduce
+	MetaMessage Meta
+	ID          int
+	M_args      MapStruct
+	R_args      ReduceStruct
 }
 
 // Add your RPC definitions here.
