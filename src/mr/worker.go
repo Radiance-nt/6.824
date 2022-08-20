@@ -3,11 +3,20 @@ package mr
 import (
 	"fmt"
 	"hash/fnv"
+	"io/ioutil"
 	"log"
 	"net/rpc"
 	"os"
 	"time"
 )
+
+func checkFileIsExist(filename string) bool {
+	var exist = true
+	if _, err := os.Stat(filename); os.IsNotExist(err) {
+		exist = false
+	}
+	return exist
+}
 
 //
 // Map functions return a slice of KeyValue.
@@ -16,6 +25,7 @@ type KeyValue struct {
 	Key   string
 	Value string
 }
+type ByKey []KeyValue
 
 //
 // use ihash(key) % NReduce to choose the reduce
@@ -30,6 +40,49 @@ func ihash(key string) int {
 //
 // main/mrworker.go calls this function.
 //
+func map_handler(mapf func(string, string) []KeyValue,
+	reply RequestMissionReply) {
+
+	inter_name := "mr-inter"
+	var f *os.File
+	var err error
+	intermediate := []KeyValue{}
+	filename := reply.M_args.Str1
+	file, err := os.Open(filename)
+	if err != nil {
+		log.Fatalf("cannot open %v", filename)
+	}
+	content, err := ioutil.ReadAll(file)
+	if err != nil {
+		log.Fatalf("cannot read %v", filename)
+	}
+	file.Close()
+	kva := mapf(reply.M_args.Str1, string(content))
+	intermediate = append(intermediate, kva...)
+
+	// TODO: Can be optimized with a buffer
+	for _, v := range intermediate {
+		filename := fmt.Sprintf("%s-%d", inter_name, ihash(v.Key))
+		for {
+			if checkFileIsExist(filename) {
+				f, err = os.OpenFile(filename, os.O_APPEND, 0666)
+			} else {
+				f, err = os.Create(filename)
+			}
+			if err == nil {
+				break
+			}
+			fmt.Printf("[Worker %d]: Open file error, retried..\n", reply.ID)
+		}
+		f.WriteString(v.Key)
+	}
+}
+
+func reduce_handler(reducef func(string, []string) string,
+	reply RequestMissionReply) {
+	output := reducef(reply.R_args.Str_reduce, reply.R_args.Result)
+	_ = output
+}
 
 func Worker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
@@ -49,26 +102,19 @@ func Worker(mapf func(string, string) []KeyValue,
 			continue
 		}
 		if reply.Flag == "map" {
-			fmt.Printf("[Worker %d]: Map\n", reply.ID)
-			inter_kv := mapf(reply.m_args.str1, reply.m_args.str2)
-			_ = inter_kv
+			fmt.Printf("[Worker %d]: Map, reply: %v\n", reply.ID, reply)
+			map_handler(mapf, reply)
 			args = RequestMissionArgs{Status: FREE, ID: reply.ID, Complete: MAP_SUCEESS}
 		} else if reply.Flag == "reduce" {
 			fmt.Printf("[Worker %d]: Reduce\n", reply.ID)
-			res := mapf(reply.m_args.str1, reply.m_args.str2)
-			_ = res
+			reduce_handler(reducef, reply)
 			args = RequestMissionArgs{Status: FREE, ID: reply.ID, Complete: REDUCE_SUCEESS}
-
 		} else {
 			fmt.Println("[Worker] ERROR: Reply: ", reply.Flag)
 			os.Exit(0)
 		}
 
 	}
-	// for i := 1; i <= 10; i++ {
-	// 	go start_worker()
-	// }
-
 }
 
 //

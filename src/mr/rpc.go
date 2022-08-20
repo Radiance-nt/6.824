@@ -25,12 +25,12 @@ const (
 )
 
 type MapStruct struct {
-	str1 string
-	str2 string
+	Str1 string
+	Str2 string
 }
 type ReduceStruct struct {
-	str_reduce string
-	result     []string
+	Str_reduce string
+	Result     []string
 }
 
 type RequestMissionArgs struct {
@@ -42,14 +42,8 @@ type RequestMissionArgs struct {
 type RequestMissionReply struct {
 	Flag   string // Task type, choice: Map or Reduce
 	ID     int
-	m_args MapStruct
-	r_args ReduceStruct
-}
-
-type CallReply struct {
-	flag    string
-	Channel chan int
-	pair    KeyValue
+	M_args MapStruct
+	R_args ReduceStruct
 }
 
 // Add your RPC definitions here.

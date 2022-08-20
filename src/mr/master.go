@@ -31,7 +31,9 @@ type Pair struct {
 type Master struct {
 	// Your definitions here.
 	mutex       sync.Mutex
-	worker_num  int
+	files       []string
+	nMap        int
+	nReduce     int
 	status      int
 	counter     int
 	task_status [2]map[int]Pair
@@ -44,27 +46,49 @@ type Master struct {
 //
 // the RPC argument and reply types are defined in rpc.go.
 //
-func (m *Master) select_task() int {
-	var index int
-	if m.status < MAP_COMPLETE {
-		index = 0
-	} else if m.status < REDUCE_COMPLETE {
-		index = 1
+func (m *Master) select_task(reply *RequestMissionReply, task_type string) {
+	var task_num int
+	var task_ptr *map[int]Pair
+	i := 0
+	reply.Flag = task_type
+	reply.ID = -1
+	if task_type == "map" {
+		task_num = m.nMap
+		task_ptr = &m.task_status[0]
+	} else if task_type == "reduce" {
+		task_num = m.nReduce
+		task_ptr = &m.task_status[1]
 	} else {
-		return -1
+		return
 	}
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
-	for i := 0; i < m.worker_num; i++ {
-		if m.task_status[index][m.counter].state == NOT_DONE {
+	for ; i < task_num; i++ {
+		if (*task_ptr)[m.counter].state == NOT_DONE {
 			p := Pair{state: DOING, start_time: time.Now()}
-			m.task_status[index][m.counter] = p
-			return m.counter
+			(*task_ptr)[m.counter] = p
+			if m.counter >= task_num {
+				fmt.Printf("[Master] Serious! task num %d, m.counter %d\n\n",
+					task_num, m.counter)
+			}
+			reply.ID = m.counter
+			break
 		} else {
-			m.counter = (m.counter + 1) % m.worker_num
+			m.counter = (m.counter + 1) % task_num
 		}
 	}
-	return -1
+	if i != task_num {
+		if task_type == "map" {
+			var filename string
+			reply.Flag = "map"
+			filename = m.files[reply.ID]
+			reply.M_args = MapStruct{Str1: filename, Str2: "2"}
+			return
+		} else if task_type == "reduce" {
+			fmt.Println("First Stage Success")
+		}
+
+	}
 }
 
 func (m *Master) AllocateMission(args *RequestMissionArgs, reply *RequestMissionReply) error {
@@ -75,7 +99,7 @@ func (m *Master) AllocateMission(args *RequestMissionArgs, reply *RequestMission
 			m.task_status[0][args.ID] = p
 		}
 	} else if args.Complete == REDUCE_SUCEESS {
-		fmt.Printf("[Master] Reduce %d task complete\n", reply.ID)
+		fmt.Printf("[Master] Reduce %d task complete\n", args.ID)
 		if args.ID >= 0 {
 			p := Pair{state: DONE, start_time: time.Now()}
 			m.task_status[1][args.ID] = p
@@ -83,21 +107,14 @@ func (m *Master) AllocateMission(args *RequestMissionArgs, reply *RequestMission
 	}
 	if args.Status == FREE {
 		if m.status == START {
-			reply.Flag = "map"
-			reply.ID = m.select_task()
-			reply.m_args = MapStruct{str1: "1", str2: "2"}
-			if reply.ID >= 0 {
-				fmt.Printf("[Master] Allocate: %d task start in Map\n", reply.ID)
-			}
-
+			m.select_task(reply, "map")
+			fmt.Printf("[Master] Allocate: %d task start in Map\n", reply.ID)
 		} else if m.status == MAP_COMPLETE {
+			m.select_task(reply, "reduce")
 			reply.Flag = "reduce"
-			reply.ID = m.select_task()
-			if reply.ID >= 0 {
-				fmt.Printf("[Master] Allocate: %d task start in Reduce\n", reply.ID)
-			}
-		} else if m.status == REDUCE_COMPLETE {
-			reply.Flag = "exit"
+			fmt.Printf("[Master] Allocate: %d task start in Reduce\n", reply.ID)
+		} else {
+			m.select_task(reply, "exit")
 			fmt.Printf("[Master] Allocate: Sending exit signal\n")
 		}
 	} else {
@@ -107,17 +124,23 @@ func (m *Master) AllocateMission(args *RequestMissionArgs, reply *RequestMission
 	return nil
 }
 
-func (m *Master) init(nReduce int) {
-	m.worker_num = nReduce
+func (m *Master) init(files []string, nReduce int) {
+	nMap := len(files)
+	m.files = files
+	m.nMap = nMap
+	m.nReduce = nReduce
 	m.counter = 0
 	m.task_status[0] = make(map[int]Pair)
 	m.task_status[1] = make(map[int]Pair)
-	for i := 0; i < m.worker_num; i++ {
+	for i := 0; i < m.nMap; i++ {
 		p := Pair{state: NOT_DONE, start_time: time.Now()}
 		m.task_status[0][i] = p
-		m.task_status[1][i] = p
 	}
-	fmt.Printf("[MakeMaster]: %d workers in total\n", nReduce)
+	for i := 0; i < m.nReduce; i++ {
+		p := Pair{state: NOT_DONE, start_time: time.Now()}
+		m.task_status[0][i] = p
+	}
+	fmt.Printf("[MakeMaster]: Map num %d; Reduce num %d\n", nMap, nReduce)
 
 }
 
@@ -151,12 +174,15 @@ func (m *Master) Done() bool {
 }
 
 func (m *Master) check_task_status() {
-	var index, state int
+	var state, task_num int
+	var task_ptr *map[int]Pair
 	for {
 		if m.status == START {
-			index = 0
+			task_num = m.nMap
+			task_ptr = &m.task_status[0]
 		} else if m.status == MAP_COMPLETE {
-			index = 1
+			task_num = m.nReduce
+			task_ptr = &m.task_status[1]
 		} else {
 			m.status = DONE
 			return
@@ -165,21 +191,21 @@ func (m *Master) check_task_status() {
 		m.mutex.Lock()
 
 		// state := m.task_status[index][0].state
-		for i := 0; i < m.worker_num; i++ {
-			if m.task_status[index][i].state == DOING && (time.Since(m.task_status[index][i].start_time) > 5*time.Minute) {
+		for i := 0; i < task_num; i++ {
+			if (*task_ptr)[i].state == DOING && (time.Since((*task_ptr)[i].start_time) > 5*time.Minute) {
 				fmt.Printf("[Poll]: Find %d task too long!\n", i)
 				p := Pair{state: NOT_DONE, start_time: time.Now()}
-				m.task_status[index][i] = p
+				(*task_ptr)[i] = p
 			}
-			if m.task_status[index][i].state != DONE {
+			if (*task_ptr)[i].state != DONE {
 				state += 1
 			}
 		}
 		if state == 0 {
 			if m.status == START {
-				fmt.Printf("[Poll]: All Map Success, index=%d\n\n", index)
+				fmt.Printf("[Poll]: All Map Success\n\n")
 			} else if m.status == MAP_COMPLETE {
-				fmt.Printf("[Poll]: All Reduce Success, index=%d\n\n", index)
+				fmt.Printf("[Poll]: All Reduce Success\n\n")
 			}
 			m.status += 1
 
@@ -196,7 +222,8 @@ func (m *Master) check_task_status() {
 //
 func MakeMaster(files []string, nReduce int) *Master {
 	m := Master{}
-	m.init(nReduce)
+
+	m.init(files, nReduce)
 	// Your code here.
 	go m.check_task_status()
 	m.server()
