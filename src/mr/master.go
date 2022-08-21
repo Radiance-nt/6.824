@@ -24,6 +24,8 @@ const (
 	DONE
 )
 
+var DOING_PATIENCE = 8
+
 type Pair struct {
 	state      int
 	start_time time.Time
@@ -109,11 +111,15 @@ func (m *Master) AllocateMission(args *RequestMissionArgs, reply *RequestMission
 	if args.Status == FREE {
 		if m.status == START {
 			m.select_task(reply, "map")
-			fmt.Printf("[Master] Allocate: %d task start in Map\n", reply.ID)
+			if reply.ID >= 0 {
+				fmt.Printf("[Master] Allocate: %d task start in Map\n", reply.ID)
+			}
 		} else if m.status == MAP_COMPLETE {
 			m.select_task(reply, "reduce")
 			reply.Flag = "reduce"
-			fmt.Printf("[Master] Allocate: %d task start in Reduce\n", reply.ID)
+			if reply.ID >= 0 {
+				fmt.Printf("[Master] Allocate: %d task start in Reduce\n", reply.ID)
+			}
 		} else {
 			m.select_task(reply, "exit")
 			fmt.Printf("[Master] Allocate: Sending exit signal\n")
@@ -167,8 +173,9 @@ func (m *Master) server() {
 //
 func (m *Master) Done() bool {
 	ret := false
-	if m.status == REDUCE_COMPLETE {
+	if m.status >= REDUCE_COMPLETE {
 		fmt.Println("[Master] Status: REDUCE_COMPLETE")
+		fmt.Println("[Master] Start finishing job")
 		ret = true
 	}
 	return ret
@@ -193,7 +200,7 @@ func (m *Master) check_task_status() {
 
 		// state := m.task_status[index][0].state
 		for i := 0; i < task_num; i++ {
-			if (*task_ptr)[i].state == DOING && (time.Since((*task_ptr)[i].start_time) > 5*time.Minute) {
+			if (*task_ptr)[i].state == DOING && (time.Since((*task_ptr)[i].start_time) > time.Duration(DOING_PATIENCE)*time.Second) {
 				fmt.Printf("[Poll]: Find %d task too long!\n", i)
 				p := Pair{state: NOT_DONE, start_time: time.Now()}
 				(*task_ptr)[i] = p

@@ -1,7 +1,7 @@
 package mr
 
 import (
-	"bufio"
+	"encoding/json"
 	"fmt"
 	"hash/fnv"
 	"io/ioutil"
@@ -34,6 +34,9 @@ func (a ByKey) Len() int           { return len(a) }
 func (a ByKey) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
 func (a ByKey) Less(i, j int) bool { return a[i].Key < a[j].Key }
 
+var inter_name = "mr-inter"
+var out_name = "mr-out"
+
 //
 // use ihash(key) % NReduce to choose the reduce
 // task number for each KeyValue emitted by Map.
@@ -43,6 +46,17 @@ func ihash(key string) int {
 	h.Write([]byte(key))
 	return int(h.Sum32() & 0x7fffffff)
 }
+func open_file(filename string) (*os.File, error) {
+	var file *os.File
+	var err error
+	if checkFileIsExist(filename) {
+		file, err = os.OpenFile(filename, os.O_WRONLY|os.O_APPEND, 0666)
+	} else {
+		file, err = os.Create(filename)
+	}
+
+	return file, err
+}
 
 //
 // main/mrworker.go calls this function.
@@ -50,9 +64,9 @@ func ihash(key string) int {
 func map_handler(mapf func(string, string) []KeyValue,
 	reply RequestMissionReply) {
 
-	inter_name := "mr-inter"
 	var file *os.File
 	var err error
+	nReduce := reply.MetaMessage.Reduce_num
 	intermediate := []KeyValue{}
 	filename := reply.M_args.Str1
 	file, err = os.Open(filename)
@@ -67,33 +81,76 @@ func map_handler(mapf func(string, string) []KeyValue,
 	kva := mapf(reply.M_args.Str1, string(content))
 	intermediate = append(intermediate, kva...)
 	sort.Sort(ByKey(intermediate))
-	// TODO: Can be optimized with a buffer
-	for _, v := range intermediate {
-		filename := fmt.Sprintf("%s-%d", inter_name, ihash(v.Key)%reply.MetaMessage.Reduce_num)
-		for {
-			if checkFileIsExist(filename) {
-				file, err = os.OpenFile(filename, os.O_WRONLY|os.O_APPEND, 0666)
-			} else {
-				file, err = os.Create(filename)
-			}
-			if err == nil {
-				defer file.Close()
-				break
-			}
-			fmt.Printf("[Worker %d]: Open file error, retried..\n", reply.ID)
+
+	jsonEncoder := make([]*json.Encoder, nReduce)
+	for i := 0; i < nReduce; i++ {
+		filename := fmt.Sprintf("%s-%d-%d", inter_name, reply.ID, i)
+		f, err := open_file(filename)
+		if err != nil {
+			fmt.Printf("[Worker %d]: Create json file error\n", reply.ID)
+			return
 		}
-		content := fmt.Sprintf("%s %s\n", v.Key, v.Value)
-		write := bufio.NewWriter(file)
-		write.WriteString(content)
-		write.Flush()
-		// f.WriteString(content)
+		jsonEncoder[i] = json.NewEncoder(f)
+		defer f.Close()
+	}
+
+	// TODO: Can be optimized with a buffer
+	for _, kv := range intermediate {
+		index := ihash(kv.Key) % nReduce
+		err := jsonEncoder[index].Encode(&kv)
+		if err != nil {
+			fmt.Printf("[Worker %d]: Json to %d failed\n", reply.ID, index)
+			return
+		}
 	}
 }
 
 func reduce_handler(reducef func(string, []string) string,
 	reply RequestMissionReply) {
-	output := reducef(reply.R_args.Str_reduce, reply.R_args.Result)
-	_ = output
+	nMap := reply.MetaMessage.Map_num
+	intermediate := []KeyValue{}
+	for i := 0; i < nMap; i++ {
+		filename := fmt.Sprintf("%s-%d-%d", inter_name, i, reply.ID)
+		file, err := os.OpenFile(filename, os.O_RDONLY, 0)
+		if err != nil {
+			fmt.Printf("[Worker %d] Reduce: Open file error %v\n", reply.ID, err)
+			return
+		}
+		dec := json.NewDecoder(file)
+		for {
+			var kv KeyValue
+			if err := dec.Decode(&kv); err != nil {
+				break
+			}
+			// fmt.Printf("[Worker %d] Reduce: kv %v\n", reply.ID, err)
+			intermediate = append(intermediate, kv)
+		}
+	}
+	// fmt.Printf("[Worker %d] Reduce output: %v \n", reply.ID, intermediate)
+	sort.Sort(ByKey(intermediate))
+
+	// filename := fmt.Sprintf("%s-%d", out_name, reply.ID)
+	filename := fmt.Sprintf("%s-%d", out_name, 0)
+	ofile, _ := open_file(filename)
+	defer ofile.Close()
+	i := 0
+	for i < len(intermediate) {
+		j := i + 1
+		for j < len(intermediate) && intermediate[j].Key == intermediate[i].Key {
+			j++
+		}
+		values := []string{}
+		for k := i; k < j; k++ {
+			values = append(values, intermediate[k].Value)
+		}
+
+		output := reducef(intermediate[i].Key, values)
+		// fmt.Printf("[Worker %d] Reduce output: %v \n", reply.ID, output)
+
+		fmt.Fprintf(ofile, "%v %v\n", intermediate[i].Key, output)
+		i = j
+	}
+
 }
 
 func Worker(mapf func(string, string) []KeyValue,
@@ -104,12 +161,12 @@ func Worker(mapf func(string, string) []KeyValue,
 		reply := RequestMission(args)
 		if reply.ID == -1 {
 			sleep_count += 1
-			if sleep_count >= 3 {
+			if sleep_count >= 5 {
 				fmt.Printf("[Worker unkonwn]: %d sleep exit\n", sleep_count)
 				os.Exit(0)
 			}
 			fmt.Printf("[Worker unkonwn]: %d sleep\n", sleep_count)
-			time.Sleep(time.Duration(5) * time.Second)
+			time.Sleep(time.Duration(3*sleep_count) * time.Second)
 
 			continue
 		}
