@@ -46,6 +46,12 @@ type ApplyMsg struct {
 	CommandIndex int
 }
 
+const (
+	STATE_FOLLOWER = iota
+	STATE_CANDIDATE
+	STATE_LEADER
+)
+
 //
 // A Go object implementing a single Raft peer.
 //
@@ -56,7 +62,7 @@ type Raft struct {
 	me        int                 // this peer's index into peers[]
 	dead      int32               // set by Kill()
 
-	isleader    bool
+	state       int
 	currentTerm int
 	votedFor    int
 
@@ -78,7 +84,11 @@ func (rf *Raft) GetState() (int, bool) {
 	var isleader bool
 	// Your code here (2A).
 	term = rf.currentTerm
-	isleader = rf.isleader
+	if rf.state == STATE_LEADER {
+		isleader = true
+	} else {
+		isleader = false
+	}
 	return term, isleader
 }
 
@@ -126,8 +136,8 @@ func (rf *Raft) readPersist(data []byte) {
 //
 type RequestVoteArgs struct {
 	// Your data here (2A, 2B).
-	term         int
-	candidate_id int
+	Term         int
+	Candidate_id int
 }
 
 //
@@ -135,20 +145,21 @@ type RequestVoteArgs struct {
 // field names must start with capital letters!
 //
 type RequestVoteReply struct {
-	term        int
-	voteGranted bool
+	Term        int
+	VoteGranted bool
 	// Your data here (2A).
 }
 
 type RequestAppendEntriesArgs struct {
 	// Your data here (2A, 2B)..
-	term         int
-	candidate_id int
+	Term     int
+	LeaderId int
 }
 
 type RequestAppendEntriesReply struct {
 	// Your data here (2A, 2B).
-	candidate_id int
+	Term    int
+	Success bool
 }
 
 //
@@ -156,24 +167,59 @@ type RequestAppendEntriesReply struct {
 //
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (2A, 2B).
-	if args.candidate_id == rf.me {
+	if args.Candidate_id == rf.me {
 		return
 	}
-	if args.term < rf.currentTerm {
-		reply.voteGranted = false
+	if args.Term < rf.currentTerm {
+		reply.Term = rf.currentTerm
+		reply.VoteGranted = false
 		return
 	}
-	// *********  If votedFor is null or candidateId, and candidate’s log is at least as up-to-date as receiver’s log, grant vote
-	reply.voteGranted = true
+	// *********  If votedFor is null or candidateId, and candidate’s log is at least as up-to-date as receiver’s log (See 5.4.1), grant vote
+	rf.mu.Lock()
+	if rf.state == STATE_FOLLOWER && rf.votedFor == -1 {
+		rf.votedFor = args.Candidate_id
+		reply.VoteGranted = true
+		return
+	}
+	rf.mu.Unlock()
 
+	reply.VoteGranted = false
 }
 
 func (rf *Raft) AppendEntries(args *RequestAppendEntriesArgs, reply *RequestAppendEntriesReply) {
 	// Your code here (2A, 2B).
-	if args.candidate_id == rf.me {
+	// may cause TROUBLE in 2B
+	if args.LeaderId == rf.me {
 		return
 	}
-	reply.candidate_id = rf.me
+	if args.Term < rf.currentTerm {
+		reply.Success = false
+		reply.Term = rf.currentTerm
+		return
+	}
+	if args.Term > rf.currentTerm {
+		if rf.state == STATE_LEADER {
+			rf.state = STATE_FOLLOWER
+			fmt.Printf("[%d] Heard HB, From Leader to follower \n", rf.me)
+		}
+		rf.mu.Lock()
+		rf.currentTerm = args.Term
+		rf.votedFor = -1
+		rf.mu.Unlock()
+
+	}
+	if rf.state == STATE_CANDIDATE && args.Term >= rf.currentTerm {
+		fmt.Printf("[%d] Heard HB, From Candidate to follower \n", rf.me)
+		rf.mu.Lock()
+		rf.state = STATE_FOLLOWER
+		// rf.currentTerm = args.Term
+		rf.votedFor = -1
+		rf.mu.Unlock()
+	}
+
+	// return false follow rule no.2
+	reply.Success = true
 	rf.last_hear_time = time.Now()
 }
 
@@ -218,57 +264,104 @@ func (rf *Raft) sendHeartBeat(server int, args *RequestAppendEntriesArgs, reply 
 
 func (rf *Raft) leader() {
 	for {
-		args := RequestAppendEntriesArgs{term: rf.currentTerm, candidate_id: rf.me}
+		args := RequestAppendEntriesArgs{Term: rf.currentTerm, LeaderId: rf.me}
 
 		for i := range rf.peers {
+			if i == rf.me {
+				continue
+			}
 			reply := RequestAppendEntriesReply{}
 			ok := rf.sendHeartBeat(i, &args, &reply)
 			if !ok {
 				fmt.Printf("[%d] sendHeartBeat not ok from %d \n", rf.me, i)
+			} else {
+				if i != rf.me {
+					fmt.Printf("[%d] recieve from %d, status: %v\n", rf.me, i, reply.Success)
+				}
 			}
 		}
 		time.Sleep(rf.heartbeat_timeout)
+		if rf.state != STATE_LEADER {
+			return
+		}
 
 	}
 }
 func (rf *Raft) raiseElection() {
+
 	rf.mu.Lock()
 	rf.votedFor = rf.me
 	rf.currentTerm += 1
+	fmt.Printf("[%d] Election time out, starting an election %d\n", rf.me, rf.currentTerm)
+
 	rf.mu.Unlock()
-	args := RequestVoteArgs{term: rf.currentTerm, candidate_id: rf.me}
+
+	args := RequestVoteArgs{Term: rf.currentTerm, Candidate_id: rf.me}
 	count := 0
 	for i := range rf.peers {
+		if i == rf.me {
+			continue
+		}
 		reply := RequestVoteReply{}
 		ok := rf.sendRequestVote(i, &args, &reply)
 		if ok {
-			if reply.voteGranted {
+			if reply.VoteGranted {
 				fmt.Printf("[%d] Recieve poll from %d \n", rf.me, i)
 				count += 1
+			} else if reply.Term > rf.currentTerm {
+				rf.mu.Lock()
+				rf.currentTerm = reply.Term
+				rf.votedFor = -1
+				rf.mu.Unlock()
+				return
 			}
 		} else {
 			fmt.Printf("[%d] sendRequestVote not ok from %d \n", rf.me, i)
 		}
 	}
-	if count > len(rf.peers)/2 {
-		rf.isleader = true
+	if count+1 > len(rf.peers)/2 {
+		if rf.state == STATE_FOLLOWER {
+			fmt.Printf("[%d] FATAL: FALL TO FOLLOWER BUT RECIEVE OVER HALF POLLS!\n", rf.me)
+		}
+		rf.state = STATE_LEADER
 		fmt.Printf("[%d] Being a leader\n", rf.me)
-		rf.leader()
-	}
+	} else {
+		fmt.Printf("[%d] Back to follower state.\n", rf.me)
+		rf.mu.Lock()
+		rf.state = STATE_FOLLOWER
+		rf.votedFor = -1
+		rf.mu.Unlock()
 
+		rf.election_timeout = time.Second * time.Duration(rand.Intn(200)+150)
+		time.Sleep(time.Microsecond * rf.election_timeout)
+	}
 }
 
 func (rf *Raft) follower() {
-	time.Sleep(time.Millisecond * rf.election_timeout)
+	rf.election_timeout = time.Microsecond * time.Duration(rand.Intn(200)+150)
+	time.Sleep(time.Microsecond * rf.election_timeout)
 	for {
 		if time.Since(rf.last_hear_time) > rf.election_timeout {
-			fmt.Printf("[%d] Election time out, starting an election\n", rf.me)
-			rf.raiseElection()
+			rf.state = STATE_CANDIDATE
+			return
 		} else {
-			rf.election_timeout = time.Millisecond * time.Duration(rand.Intn(200)+150)
+			rf.election_timeout = time.Microsecond * time.Duration(rand.Intn(200)+150)
 			if rf.election_timeout-time.Since(rf.last_hear_time) > 0 {
 				time.Sleep(rf.election_timeout - time.Since(rf.last_hear_time))
 			}
+		}
+
+	}
+}
+
+func (rf *Raft) alive() {
+	for {
+		if rf.state == STATE_FOLLOWER {
+			rf.follower()
+		} else if rf.state == STATE_CANDIDATE {
+			rf.raiseElection()
+		} else {
+			rf.leader()
 		}
 
 	}
@@ -336,9 +429,12 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.peers = peers
 	rf.persister = persister
 	rf.me = me
-	rf.heartbeat_timeout = 50
+	rf.heartbeat_timeout = time.Microsecond * time.Duration(20)
+	rf.last_hear_time = time.Now()
+	rf.currentTerm = 0
+	rf.state = STATE_FOLLOWER
 	// Your initialization code here (2A, 2B, 2C).
-	go rf.follower()
+	go rf.alive()
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
 
