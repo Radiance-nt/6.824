@@ -10,10 +10,15 @@ import (
 const (
 	heartbeat_timeout = time.Millisecond * time.Duration(50)
 
-	waitVote_timeout        = 20 * time.Millisecond
+	waitVote_timeout = 5 * time.Millisecond
+	// waitVote_timeout        = 5 * time.Millisecond
 	election_timout_minimun = 150
 	election_timout_rand    = 50
 )
+
+func (rf *Raft) ResetelectionTimer() {
+	rf.electionTimer.Reset(RandomizedElectionTimeout())
+}
 
 func RandomizedElectionTimeout() time.Duration {
 	return time.Duration(rand.Intn(election_timout_rand)+election_timout_minimun) * time.Millisecond
@@ -37,10 +42,23 @@ func (rf *Raft) ChangeState(state int) {
 	if state == STATE_FOLLOWER {
 		rf.state = STATE_FOLLOWER
 		rf.votedFor = -1
-		rf.electionTimer.Reset(RandomizedElectionTimeout())
+		// rf.ResetelectionTimer()
 	} else if state == STATE_CANDIDATE {
 		rf.state = STATE_CANDIDATE
+
 	} else if state == STATE_LEADER {
+
+		rf.nextIndex = make([]int, len(rf.peers))
+		fmt.Printf("[%d] leader() set rf.nextIndex %d \n", rf.me, rf.commitIndex+1)
+
+		for index := range rf.nextIndex {
+			rf.nextIndex[index] = rf.commitIndex + 1
+		}
+		rf.matchIndex = make([]int, len(rf.peers))
+		for index := range rf.matchIndex {
+			rf.matchIndex[index] = 0
+		}
+
 		rf.state = STATE_LEADER
 		rf.leader_cond.Signal()
 
@@ -53,36 +71,38 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (2A, 2B).
-	fmt.Printf("[%d] --- Recieved requset vote from %d whose term is %d\n", rf.me, args.Candidate_id, args.Term)
+	// fmt.Printf("[%d] --- Recieved requset vote from %d whose term is %d\n", rf.me, args.Candidate_id, args.Term)
+	rf.mu.Lock()
 	if args.Term < rf.currentTerm {
 		reply.Term = rf.currentTerm
 		reply.VoteGranted = false
-		fmt.Printf("[%d] --- Recieved requset vote from %d whose term is %d, not granted because args.Term < rf.currentTerm\n", rf.me, args.Candidate_id, args.Term)
+		// fmt.Printf("[%d] --- Recieved requset vote from %d whose term is %d, not granted because args.Term < rf.currentTerm\n", rf.me, args.Candidate_id, args.Term)
+		rf.mu.Unlock()
 		return
 	}
-	// fmt.Printf("[%d] --- Recieved requset vote from %d whose term is %d, aquire the lock\n", rf.me, args.Candidate_id, args.Term)
-
-	// *********  If votedFor is null or candidateId, and candidate’s log is at least as up-to-date as receiver’s log (See 5.4.1), grant vote
-	rf.mu.Lock()
-	// fmt.Printf("[%d] --- vote lock \n", rf.me)
-
-	// fmt.Printf("[%d] --- Recieved requset vote from %d whose term is %d, get the lock\n", rf.me, args.Candidate_id, args.Term)
 
 	defer rf.mu.Unlock()
-	// defer fmt.Printf("[%d] --- vote unlock \n", rf.me)
+	defer rf.persist()
+	// defer fmt.Printf("[%d]  defer req votes rpc  persist\n", rf.me)
 
 	if args.Term > rf.currentTerm {
-		fmt.Printf("[%d] --- Turn to follower, recieved from machine%d, args.Term %d > rf.currentTerm %d\n", rf.me, args.Candidate_id, args.Term, rf.currentTerm)
+		// fmt.Printf("[%d] --- Turn to follower, recieved from machine%d, args.Term %d > rf.currentTerm %d\n", rf.me, args.Candidate_id, args.Term, rf.currentTerm)
+		rf.currentTerm = args.Term
 		rf.ChangeState(STATE_FOLLOWER)
 	}
 	if rf.votedFor != -1 {
-		fmt.Printf("[%d] --- Recieved requset vote from %d whose term is %d, not granted because already voted\n", rf.me, args.Candidate_id, args.Term)
+		// fmt.Printf("[%d] --- Recieved requset vote from %d whose term is %d, not granted because already voted\n", rf.me, args.Candidate_id, args.Term)
 		reply.VoteGranted = false
 		return
 	}
 	// more up to date last term
+	// args.LastLogIndex < rf.getLastIndex() ||
 	if args.LastLogTerm < rf.getIndexTerm(rf.getLastIndex()) {
-		fmt.Printf("[%d] --- Recieved requset vote from %d whose term is %d, not granted because args.LastLogTerm < rf.getIndexTerm(rf.getLastIndex() \n", rf.me, args.Candidate_id, args.Term)
+		// fmt.Printf("[%d] --- Recieved requset vote from %d whose term is %d, not granted because args.LastLogTerm < rf.getIndexTerm(rf.getLastIndex() \n", rf.me, args.Candidate_id, args.Term)
+		reply.VoteGranted = false
+		return
+	} else if args.LastLogTerm == rf.getIndexTerm(rf.getLastIndex()) && args.LastLogIndex < rf.getLastIndex() {
+		// fmt.Printf("[%d] --- Recieved requset vote from %d whose term is %d, not granted because args.LastLogTerm == rf.getIndexTerm(rf.getLastIndex() but longer \n", rf.me, args.Candidate_id, args.Term)
 		reply.VoteGranted = false
 		return
 	}
@@ -94,8 +114,8 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	rf.currentTerm = args.Term
 	rf.votedFor = args.Candidate_id
 	reply.VoteGranted = true
-	fmt.Printf("[%d] --- Vote for %d whose term is %d\n", rf.me, args.Candidate_id, args.Term)
-	rf.electionTimer.Reset(RandomizedElectionTimeout())
+	// fmt.Printf("[%d] --- Vote for %d whose term is %d, at this time log is %v\n", rf.me, args.Candidate_id, args.Term, rf.log)
+	rf.ResetelectionTimer()
 }
 
 func (rf *Raft) request(args RequestVoteArgs, i int, count *int, count_lock *sync.Mutex) {
@@ -112,26 +132,34 @@ func (rf *Raft) request(args RequestVoteArgs, i int, count *int, count_lock *syn
 		(*count_lock).Unlock()
 		return
 	}
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
 	if reply.Term > rf.currentTerm {
-		rf.mu.Lock()
+
 		// fmt.Printf("[%d] --- request lock \n", rf.me)
-		fmt.Printf("[%d] -- Recieved reply from machine%d, reply.Term %d > rf.currentTerm %d\n", rf.me, i, args.Term, rf.currentTerm)
+		fmt.Printf("[%d] -- Recieved reply from machine%d, reply.Term %d > rf.currentTerm %d\n", rf.me, i, reply.Term, rf.currentTerm)
 		rf.currentTerm = reply.Term
 		rf.ChangeState(STATE_FOLLOWER)
-		rf.mu.Unlock()
+
+		// fmt.Printf("[%d] request() reply term larger  persist\n", rf.me)
+		rf.persist()
 		// fmt.Printf("[%d] --- request unlock \n", rf.me)
 		return
 	}
 
 }
 func (rf *Raft) raiseElection() {
-
+	raise_start := time.Now()
 	rf.mu.Lock()
 	rf.ChangeState(STATE_CANDIDATE)
 	rf.currentTerm += 1
 	rf.votedFor = rf.me
-	rf.electionTimer.Reset(RandomizedElectionTimeout())
+	rf.ResetelectionTimer()
 	fmt.Printf("[%d] - Election time out, starting an election %d\n", rf.me, rf.currentTerm)
+	// fmt.Printf("[%d]  - Election persist\n", rf.me)
+
+	rf.persist()
 
 	term := rf.currentTerm
 	args := RequestVoteArgs{Term: term, Candidate_id: rf.me, LastLogIndex: rf.getLastIndex(), LastLogTerm: rf.getIndexTerm(rf.getLastIndex())}
@@ -145,36 +173,72 @@ func (rf *Raft) raiseElection() {
 		go rf.request(args, i, &count, &count_lock)
 	}
 
-	time.Sleep(waitVote_timeout)
-	fmt.Printf("[%d] - Poll count: %d\n", rf.me, count)
+	// time.Sleep(election_timout_minimun)
+	// fmt.Printf("[%d] - Poll count: %d\n", rf.me, count)
 
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
-	// defer fmt.Printf("[%d] --- raise election unlock \n", rf.me)
+	// rf.mu.Lock()
+	// defer rf.mu.Unlock()
 
-	// fmt.Printf("[%d] --- raise election lock \n", rf.me)
+	// // defer fmt.Printf("[%d] --- raise election unlock \n", rf.me)
 
-	if rf.state != STATE_CANDIDATE {
-		// fmt.Printf("[%d] --- raise election unlock \n", rf.me)
-		fmt.Printf("[%d] --- Return because state is %d \n", rf.me, rf.state)
-		return
-	}
-	if count+1 > len(rf.peers)/2 {
-		// if rf.state == STATE_FOLLOWER {
-		// 	fmt.Printf("[%d] - FATAL: FALL TO FOLLOWER BUT RECIEVE OVER HALF POLLS!\n", rf.me)
-		// }
-		fmt.Printf("[%d] - Being a leader at term %d\n", rf.me, rf.currentTerm)
+	// // fmt.Printf("[%d] --- raise election lock \n", rf.me)
 
-		rf.ChangeState(STATE_LEADER)
+	// if rf.state != STATE_CANDIDATE {
+	// 	// fmt.Printf("[%d] --- raise election unlock \n", rf.me)
+	// 	fmt.Printf("[%d] --- Return because state is %d \n", rf.me, rf.state)
+	// 	return
+	// }
+	// if count+1 > len(rf.peers)/2 {
+	// 	// if rf.state == STATE_FOLLOWER {
+	// 	// 	fmt.Printf("[%d] - FATAL: FALL TO FOLLOWER BUT RECIEVE OVER HALF POLLS!\n", rf.me)
+	// 	// }
+	// 	fmt.Printf("[%d] - Being a leader at term, log is %v %d\n", rf.me, rf.currentTerm, rf.log)
 
-		return
+	// 	rf.ChangeState(STATE_LEADER)
+	// 	defer fmt.Printf("[%d]  vote enough  persist\n", rf.me)
+
+	// 	rf.persist()
+	// 	return
+	// }
+	for time.Since(raise_start) < election_timout_minimun*time.Millisecond {
+		rf.mu.Lock()
+		// fmt.Printf("[%d] --- raise election lock \n", rf.me)
+
+		if rf.state != STATE_CANDIDATE {
+			// fmt.Printf("[%d] --- raise election unlock \n", rf.me)
+			fmt.Printf("[%d] --- Return because state is %d \n", rf.me, rf.state)
+			rf.mu.Unlock()
+
+			return
+		}
+		count_lock.Lock()
+		if count+1 > len(rf.peers)/2 {
+			// if rf.state == STATE_FOLLOWER {
+			// 	fmt.Printf("[%d] - FATAL: FALL TO FOLLOWER BUT RECIEVE OVER HALF POLLS!\n", rf.me)
+			// }
+			fmt.Printf("[%d] - Poll count: %d\n", rf.me, count)
+
+			fmt.Printf("[%d] - Being a leader at term, log is %v %d\n", rf.me, rf.currentTerm, rf.log)
+
+			rf.ChangeState(STATE_LEADER)
+			fmt.Printf("[%d]  vote enough  persist\n", rf.me)
+			count_lock.Unlock()
+
+			rf.persist()
+			rf.mu.Unlock()
+			return
+		}
+		count_lock.Unlock()
+
+		rf.mu.Unlock()
+		time.Sleep(waitVote_timeout)
 	}
 
 	fmt.Printf("[%d] --- Didn't get enough polls, count+1 %d> len(rf.peers)/2 %d,  state is %d \n", rf.me, count+1, len(rf.peers)/2, rf.state)
 
 }
 func (rf *Raft) alive() {
-	rf.electionTimer.Reset(RandomizedElectionTimeout())
+	rf.ResetelectionTimer()
 	defer rf.electionTimer.Stop()
 
 	for !rf.killed() {
@@ -191,27 +255,14 @@ func (rf *Raft) leader_hb() {
 	for !rf.killed() {
 		rf.leader_cond.L.Lock()
 		for !rf.killed() && rf.state != STATE_LEADER {
+			// time.Sleep(10 * time.Millisecond)
 			rf.leader_cond.Wait()
 		}
 		fmt.Printf("[%d] # Being a leader \n", rf.me)
-
 		rf.leader_cond.L.Unlock()
 
-		rf.mu.Lock()
-		term = rf.currentTerm
-		rf.nextIndex = make([]int, len(rf.peers))
-		fmt.Printf("[%d] leader() set rf.nextIndex %d \n", rf.me, rf.commitIndex+1)
-
-		for index := range rf.nextIndex {
-			rf.nextIndex[index] = rf.commitIndex + 1
-		}
-		rf.matchIndex = make([]int, len(rf.peers))
-		for index := range rf.matchIndex {
-			rf.matchIndex[index] = 0
-		}
-		rf.mu.Unlock()
-
 		rf.heartbeatTimer.Reset(heartbeat_timeout)
+		term = rf.currentTerm
 		for !rf.killed() && rf.currentTerm == term && rf.state == STATE_LEADER {
 			fmt.Printf("[%d] # leader() starting to sendHeartBeat of %d term to everyone \n", rf.me, rf.currentTerm)
 
@@ -221,6 +272,9 @@ func (rf *Raft) leader_hb() {
 				}
 				go rf.sendHB(i, true)
 			}
+			rf.mu.Lock()
+			rf.commitIndex = rf.findLargestcommitIndex()
+			rf.mu.Unlock()
 			<-rf.heartbeatTimer.C
 		}
 		rf.heartbeatTimer.Stop()
