@@ -1,7 +1,6 @@
 package raft
 
 import (
-	"fmt"
 	"math/rand"
 	"sync"
 	"time"
@@ -49,7 +48,7 @@ func (rf *Raft) ChangeState(state int) {
 	} else if state == STATE_LEADER {
 
 		rf.nextIndex = make([]int, len(rf.peers))
-		fmt.Printf("[%d] leader() set rf.nextIndex %d \n", rf.me, rf.commitIndex+1)
+		DPrintf("[%d] leader() set rf.nextIndex %d \n", rf.me, rf.commitIndex+1)
 
 		for index := range rf.nextIndex {
 			rf.nextIndex[index] = rf.commitIndex + 1
@@ -60,6 +59,29 @@ func (rf *Raft) ChangeState(state int) {
 		}
 
 		rf.state = STATE_LEADER
+		// No-op ////////////////////////////////////
+		rf.log = append(rf.log, entry{Term: rf.currentTerm, Message: nil})
+		rf.persist()
+		DPrintf("[%d] Being a Leader NO-OP %d \n", rf.me, rf.commitIndex+1)
+		for i := range rf.peers {
+			if i != rf.me {
+				rf.replicator_cond[i].Signal()
+			}
+		}
+		time.Sleep(heartbeat_timeout)
+		rf.commitIndex = rf.findLargestcommitIndex()
+
+		// commitIndex := min(rf.commitIndex, len(rf.log)-1)
+
+		// for i := rf.lastApplied + 1; i <= commitIndex; i++ {
+		// 	DPrintf("[%d] $ Apply index %d, rf.commitIndex is %d, command %v\n, log is %v\n", rf.me, i, commitIndex, rf.log[i], rf.log)
+		// 	msg := ApplyMsg{CommandValid: true, Command: rf.log[i].Message, CommandIndex: i}
+		// 	rf.applyCh <- msg
+		// 	rf.lastApplied = i
+		// 	DPrintf("[%d] $ lastApplied set to %d\n", rf.me, i)
+		// }
+
+		////////////////////////////////////////////
 		rf.leader_cond.Signal()
 
 	}
@@ -71,38 +93,38 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (2A, 2B).
-	// fmt.Printf("[%d] --- Recieved requset vote from %d whose term is %d\n", rf.me, args.Candidate_id, args.Term)
+	// DPrintf("[%d] --- Recieved requset vote from %d whose term is %d\n", rf.me, args.Candidate_id, args.Term)
 	rf.mu.Lock()
 	if args.Term < rf.currentTerm {
 		reply.Term = rf.currentTerm
 		reply.VoteGranted = false
-		// fmt.Printf("[%d] --- Recieved requset vote from %d whose term is %d, not granted because args.Term < rf.currentTerm\n", rf.me, args.Candidate_id, args.Term)
+		// DPrintf("[%d] --- Recieved requset vote from %d whose term is %d, not granted because args.Term < rf.currentTerm\n", rf.me, args.Candidate_id, args.Term)
 		rf.mu.Unlock()
 		return
 	}
 
 	defer rf.mu.Unlock()
 	defer rf.persist()
-	// defer fmt.Printf("[%d]  defer req votes rpc  persist\n", rf.me)
+	// defer DPrintf("[%d]  defer req votes rpc  persist\n", rf.me)
 
 	if args.Term > rf.currentTerm {
-		// fmt.Printf("[%d] --- Turn to follower, recieved from machine%d, args.Term %d > rf.currentTerm %d\n", rf.me, args.Candidate_id, args.Term, rf.currentTerm)
+		// DPrintf("[%d] --- Turn to follower, recieved from machine%d, args.Term %d > rf.currentTerm %d\n", rf.me, args.Candidate_id, args.Term, rf.currentTerm)
 		rf.currentTerm = args.Term
 		rf.ChangeState(STATE_FOLLOWER)
 	}
 	if rf.votedFor != -1 {
-		// fmt.Printf("[%d] --- Recieved requset vote from %d whose term is %d, not granted because already voted\n", rf.me, args.Candidate_id, args.Term)
+		// DPrintf("[%d] --- Recieved requset vote from %d whose term is %d, not granted because already voted\n", rf.me, args.Candidate_id, args.Term)
 		reply.VoteGranted = false
 		return
 	}
 	// more up to date last term
 	// args.LastLogIndex < rf.getLastIndex() ||
 	if args.LastLogTerm < rf.getIndexTerm(rf.getLastIndex()) {
-		// fmt.Printf("[%d] --- Recieved requset vote from %d whose term is %d, not granted because args.LastLogTerm < rf.getIndexTerm(rf.getLastIndex() \n", rf.me, args.Candidate_id, args.Term)
+		// DPrintf("[%d] --- Recieved requset vote from %d whose term is %d, not granted because args.LastLogTerm < rf.getIndexTerm(rf.getLastIndex() \n", rf.me, args.Candidate_id, args.Term)
 		reply.VoteGranted = false
 		return
 	} else if args.LastLogTerm == rf.getIndexTerm(rf.getLastIndex()) && args.LastLogIndex < rf.getLastIndex() {
-		// fmt.Printf("[%d] --- Recieved requset vote from %d whose term is %d, not granted because args.LastLogTerm == rf.getIndexTerm(rf.getLastIndex() but longer \n", rf.me, args.Candidate_id, args.Term)
+		// DPrintf("[%d] --- Recieved requset vote from %d whose term is %d, not granted because args.LastLogTerm == rf.getIndexTerm(rf.getLastIndex() but longer \n", rf.me, args.Candidate_id, args.Term)
 		reply.VoteGranted = false
 		return
 	}
@@ -114,7 +136,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	rf.currentTerm = args.Term
 	rf.votedFor = args.Candidate_id
 	reply.VoteGranted = true
-	// fmt.Printf("[%d] --- Vote for %d whose term is %d, at this time log is %v\n", rf.me, args.Candidate_id, args.Term, rf.log)
+	// DPrintf("[%d] --- Vote for %d whose term is %d, at this time log is %v\n", rf.me, args.Candidate_id, args.Term, rf.log)
 	rf.ResetelectionTimer()
 }
 
@@ -122,11 +144,11 @@ func (rf *Raft) request(args RequestVoteArgs, i int, count *int, count_lock *syn
 	reply := RequestVoteReply{}
 	ok := rf.sendRequestVote(i, &args, &reply)
 	if !ok {
-		fmt.Printf("[%d] -- sendRequestVote not ok from %d \n", rf.me, i)
+		DPrintf("[%d] -- sendRequestVote not ok from %d \n", rf.me, i)
 		return
 	}
 	if reply.VoteGranted {
-		fmt.Printf("[%d] -- Recieve poll from %d \n", rf.me, i)
+		DPrintf("[%d] -- Recieve poll from %d \n", rf.me, i)
 		(*count_lock).Lock()
 		*count += 1
 		(*count_lock).Unlock()
@@ -137,14 +159,14 @@ func (rf *Raft) request(args RequestVoteArgs, i int, count *int, count_lock *syn
 
 	if reply.Term > rf.currentTerm {
 
-		// fmt.Printf("[%d] --- request lock \n", rf.me)
-		fmt.Printf("[%d] -- Recieved reply from machine%d, reply.Term %d > rf.currentTerm %d\n", rf.me, i, reply.Term, rf.currentTerm)
+		// DPrintf("[%d] --- request lock \n", rf.me)
+		DPrintf("[%d] -- Recieved reply from machine%d, reply.Term %d > rf.currentTerm %d\n", rf.me, i, reply.Term, rf.currentTerm)
 		rf.currentTerm = reply.Term
 		rf.ChangeState(STATE_FOLLOWER)
 
-		// fmt.Printf("[%d] request() reply term larger  persist\n", rf.me)
+		// DPrintf("[%d] request() reply term larger  persist\n", rf.me)
 		rf.persist()
-		// fmt.Printf("[%d] --- request unlock \n", rf.me)
+		// DPrintf("[%d] --- request unlock \n", rf.me)
 		return
 	}
 
@@ -156,8 +178,8 @@ func (rf *Raft) raiseElection() {
 	rf.currentTerm += 1
 	rf.votedFor = rf.me
 	rf.ResetelectionTimer()
-	fmt.Printf("[%d] - Election time out, starting an election %d\n", rf.me, rf.currentTerm)
-	// fmt.Printf("[%d]  - Election persist\n", rf.me)
+	DPrintf("[%d] - Election time out, starting an election %d\n", rf.me, rf.currentTerm)
+	// DPrintf("[%d]  - Election persist\n", rf.me)
 
 	rf.persist()
 
@@ -174,39 +196,39 @@ func (rf *Raft) raiseElection() {
 	}
 
 	// time.Sleep(election_timout_minimun)
-	// fmt.Printf("[%d] - Poll count: %d\n", rf.me, count)
+	// DPrintf("[%d] - Poll count: %d\n", rf.me, count)
 
 	// rf.mu.Lock()
 	// defer rf.mu.Unlock()
 
-	// // defer fmt.Printf("[%d] --- raise election unlock \n", rf.me)
+	// // defer DPrintf("[%d] --- raise election unlock \n", rf.me)
 
-	// // fmt.Printf("[%d] --- raise election lock \n", rf.me)
+	// // DPrintf("[%d] --- raise election lock \n", rf.me)
 
 	// if rf.state != STATE_CANDIDATE {
-	// 	// fmt.Printf("[%d] --- raise election unlock \n", rf.me)
-	// 	fmt.Printf("[%d] --- Return because state is %d \n", rf.me, rf.state)
+	// 	// DPrintf("[%d] --- raise election unlock \n", rf.me)
+	// 	DPrintf("[%d] --- Return because state is %d \n", rf.me, rf.state)
 	// 	return
 	// }
 	// if count+1 > len(rf.peers)/2 {
 	// 	// if rf.state == STATE_FOLLOWER {
-	// 	// 	fmt.Printf("[%d] - FATAL: FALL TO FOLLOWER BUT RECIEVE OVER HALF POLLS!\n", rf.me)
+	// 	// 	DPrintf("[%d] - FATAL: FALL TO FOLLOWER BUT RECIEVE OVER HALF POLLS!\n", rf.me)
 	// 	// }
-	// 	fmt.Printf("[%d] - Being a leader at term, log is %v %d\n", rf.me, rf.currentTerm, rf.log)
+	// 	DPrintf("[%d] - Being a leader at term, log is %v %d\n", rf.me, rf.currentTerm, rf.log)
 
 	// 	rf.ChangeState(STATE_LEADER)
-	// 	defer fmt.Printf("[%d]  vote enough  persist\n", rf.me)
+	// 	defer DPrintf("[%d]  vote enough  persist\n", rf.me)
 
 	// 	rf.persist()
 	// 	return
 	// }
 	for time.Since(raise_start) < election_timout_minimun*time.Millisecond {
 		rf.mu.Lock()
-		// fmt.Printf("[%d] --- raise election lock \n", rf.me)
+		// DPrintf("[%d] --- raise election lock \n", rf.me)
 
 		if rf.state != STATE_CANDIDATE {
-			// fmt.Printf("[%d] --- raise election unlock \n", rf.me)
-			fmt.Printf("[%d] --- Return because state is %d \n", rf.me, rf.state)
+			// DPrintf("[%d] --- raise election unlock \n", rf.me)
+			DPrintf("[%d] --- Return because state is %d \n", rf.me, rf.state)
 			rf.mu.Unlock()
 
 			return
@@ -214,14 +236,14 @@ func (rf *Raft) raiseElection() {
 		count_lock.Lock()
 		if count+1 > len(rf.peers)/2 {
 			// if rf.state == STATE_FOLLOWER {
-			// 	fmt.Printf("[%d] - FATAL: FALL TO FOLLOWER BUT RECIEVE OVER HALF POLLS!\n", rf.me)
+			// 	DPrintf("[%d] - FATAL: FALL TO FOLLOWER BUT RECIEVE OVER HALF POLLS!\n", rf.me)
 			// }
-			fmt.Printf("[%d] - Poll count: %d\n", rf.me, count)
+			DPrintf("[%d] - Poll count: %d\n", rf.me, count)
 
-			fmt.Printf("[%d] - Being a leader at term, log is %v %d\n", rf.me, rf.currentTerm, rf.log)
+			DPrintf("[%d] - Being a leader at term, log is %v %d\n", rf.me, rf.currentTerm, rf.log)
 
 			rf.ChangeState(STATE_LEADER)
-			fmt.Printf("[%d]  vote enough  persist\n", rf.me)
+			DPrintf("[%d]  vote enough  persist\n", rf.me)
 			count_lock.Unlock()
 
 			rf.persist()
@@ -234,7 +256,7 @@ func (rf *Raft) raiseElection() {
 		time.Sleep(waitVote_timeout)
 	}
 
-	fmt.Printf("[%d] --- Didn't get enough polls, count+1 %d> len(rf.peers)/2 %d,  state is %d \n", rf.me, count+1, len(rf.peers)/2, rf.state)
+	DPrintf("[%d] --- Didn't get enough polls, count+1 %d> len(rf.peers)/2 %d,  state is %d \n", rf.me, count+1, len(rf.peers)/2, rf.state)
 
 }
 func (rf *Raft) alive() {
@@ -245,7 +267,7 @@ func (rf *Raft) alive() {
 		<-rf.electionTimer.C
 		if rf.state != STATE_LEADER {
 			rf.raiseElection()
-			fmt.Printf("[%d] - Finish election \n", rf.me)
+			DPrintf("[%d] - Finish election \n", rf.me)
 
 		}
 	}
@@ -258,13 +280,13 @@ func (rf *Raft) leader_hb() {
 			// time.Sleep(10 * time.Millisecond)
 			rf.leader_cond.Wait()
 		}
-		fmt.Printf("[%d] # Being a leader \n", rf.me)
+		DPrintf("[%d] # Being a leader \n", rf.me)
 		rf.leader_cond.L.Unlock()
 
 		rf.heartbeatTimer.Reset(heartbeat_timeout)
 		term = rf.currentTerm
 		for !rf.killed() && rf.currentTerm == term && rf.state == STATE_LEADER {
-			fmt.Printf("[%d] # leader() starting to sendHeartBeat of %d term to everyone \n", rf.me, rf.currentTerm)
+			DPrintf("[%d] # leader() starting to sendHeartBeat of %d term to everyone \n", rf.me, rf.currentTerm)
 
 			for i := range rf.peers {
 				if i == rf.me {
@@ -278,6 +300,6 @@ func (rf *Raft) leader_hb() {
 			<-rf.heartbeatTimer.C
 		}
 		rf.heartbeatTimer.Stop()
-		fmt.Printf("[%d] # Back to follower because Learder changed... \n", rf.me)
+		DPrintf("[%d] # Back to follower because Learder changed... \n", rf.me)
 	}
 }

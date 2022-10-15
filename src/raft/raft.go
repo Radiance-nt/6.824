@@ -20,7 +20,6 @@ package raft
 import (
 	"bytes"
 	"errors"
-	"fmt"
 	"labs/src/labgob"
 	"labs/src/labrpc"
 	"sync"
@@ -144,7 +143,7 @@ func (rf *Raft) persist() {
 	e.Encode(rf.log)
 	data := w.Bytes()
 	rf.persister.SaveRaftState(data)
-	// fmt.Printf("[%d] @ Save Persist %d, %d, %v\n", rf.me, rf.currentTerm, rf.votedFor, rf.log)
+	// DPrintf("[%d] @ Save Persist %d, %d, %v\n", rf.me, rf.currentTerm, rf.votedFor, rf.log)
 
 }
 
@@ -157,8 +156,8 @@ func (rf *Raft) readPersist(data []byte) {
 	}
 	// Your code here (2C).
 
-	// fmt.Printf("[%d] @@@ Read Persist\n", rf.me)
-	// fmt.Printf("[%d] @@@ Read Persist %v\n", rf.me, data)
+	// DPrintf("[%d] @@@ Read Persist\n", rf.me)
+	// DPrintf("[%d] @@@ Read Persist %v\n", rf.me, data)
 	r := bytes.NewBuffer(data)
 	d := labgob.NewDecoder(r)
 	var currentTerm int
@@ -175,7 +174,7 @@ func (rf *Raft) readPersist(data []byte) {
 		rf.currentTerm = currentTerm
 		rf.votedFor = votedFor
 		rf.log = log
-		fmt.Printf("[%d] @@@ Read Persist,%d %d  %v\n", rf.me, rf.currentTerm, rf.votedFor, rf.log)
+		DPrintf("[%d] @@@ Read Persist,%d %d  %v\n", rf.me, rf.currentTerm, rf.votedFor, rf.log)
 
 	}
 }
@@ -215,18 +214,18 @@ type RequestAppendEntriesReply struct {
 func (rf *Raft) AppendEntries(args *RequestAppendEntriesArgs, reply *RequestAppendEntriesReply) {
 	// Your code here (2A, 2B).
 	rf.mu.Lock()
-	// fmt.Printf("[%d] ***AE get lock\n", rf.me)
+	// DPrintf("[%d] ***AE get lock\n", rf.me)
 	defer rf.mu.Unlock()
-	// defer fmt.Printf("[%d] ***AE unlock\n", rf.me)
+	// defer DPrintf("[%d] ***AE unlock\n", rf.me)
 	defer rf.persist()
-	// defer fmt.Printf("[%d] ** defer appendEntrie  persist\n", rf.me)
+	// defer DPrintf("[%d] ** defer appendEntrie  persist\n", rf.me)
 
 	if args.Term < rf.currentTerm {
 		if len(args.Entries) == 0 {
-			// fmt.Printf("[%d] Recieved HB: args.Term %d < rf.currentTerm %d from %d\n", rf.me, args.Term, rf.currentTerm, args.LeaderId)
+			// DPrintf("[%d] Recieved HB: args.Term %d < rf.currentTerm %d from %d\n", rf.me, args.Term, rf.currentTerm, args.LeaderId)
 
 		} else {
-			fmt.Printf("[%d] *** Recieved Appending, args.Term %d < rf.currentTerm %d from %d\n", rf.me, args.Term, rf.currentTerm, args.LeaderId)
+			DPrintf("[%d] *** Recieved Appending, args.Term %d < rf.currentTerm %d from %d\n", rf.me, args.Term, rf.currentTerm, args.LeaderId)
 		}
 		reply.Success = false
 		reply.Term = rf.currentTerm
@@ -234,25 +233,25 @@ func (rf *Raft) AppendEntries(args *RequestAppendEntriesArgs, reply *RequestAppe
 	}
 	if args.Term > rf.currentTerm || (args.Term == rf.currentTerm && rf.state == STATE_CANDIDATE) {
 		if rf.state == STATE_LEADER {
-			fmt.Printf("[%d] Heard HB, From Leader to follower, args.Term %d < rf.currentTerm %d from %d\n",
+			DPrintf("[%d] Heard HB, From Leader to follower, args.Term %d < rf.currentTerm %d from %d\n",
 				rf.me, args.Term, rf.currentTerm, args.LeaderId)
 		} else if args.Term == rf.currentTerm && rf.state == STATE_CANDIDATE {
-			fmt.Printf("[%d] Heard HB, From Candidate to follower, args.Term %d < rf.currentTerm %d from %d\n",
+			DPrintf("[%d] Heard HB, From Candidate to follower, args.Term %d < rf.currentTerm %d from %d\n",
 				rf.me, args.Term, rf.currentTerm, args.LeaderId)
 		}
 		rf.currentTerm = args.Term
 		rf.ChangeState(STATE_FOLLOWER)
 	}
-	fmt.Printf("[%d] Heard HB from %d of %d term, reset the timer \n", rf.me, args.LeaderId, args.Term)
+	DPrintf("[%d] Heard HB from %d of %d term, reset the timer \n", rf.me, args.LeaderId, args.Term)
 
 	rf.ResetelectionTimer()
 
 	// return false if log doesn't contain an entry matching prevLogIndex whose term matches preLogTerm, follow rule no.2
-	fmt.Printf("[%d] ***  Heard appending from %d of term %d, len(rf.log) %d, PrevLogIndex=%d \n",
+	DPrintf("[%d] ***  Heard appending from %d of term %d, len(rf.log) %d, PrevLogIndex=%d \n",
 		rf.me, args.LeaderId, args.Term, len(rf.log), args.PrevLogIndex)
 
 	if len(rf.log) <= args.PrevLogIndex {
-		// fmt.Printf("[%d] ***  Respond failed, len(rf.log) %d \n", rf.me, len(rf.log))
+		// DPrintf("[%d] ***  Respond failed, len(rf.log) %d \n", rf.me, len(rf.log))
 
 		reply.ConflictIndex = len(rf.log)
 		reply.Success = false
@@ -261,10 +260,10 @@ func (rf *Raft) AppendEntries(args *RequestAppendEntriesArgs, reply *RequestAppe
 		return
 	}
 	if args.PrevLogIndex >= 0 && rf.log[args.PrevLogIndex].Term != args.PrevLogTerm {
-		fmt.Printf("[%d] ***  Respond failed, args.PrevLogIndex %d \n", rf.me, args.PrevLogIndex)
+		DPrintf("[%d] ***  Respond failed, args.PrevLogIndex %d \n", rf.me, args.PrevLogIndex)
 		reply.ConflictIndex = 1
 		conflictTerm := rf.log[args.PrevLogIndex].Term
-		fmt.Printf("[%d] *** len(rf.log)=%d, rf.log[len(rf.log) - 1].Term = %d\n", rf.me, len(rf.log), rf.log[len(rf.log)-1].Term)
+		DPrintf("[%d] *** len(rf.log)=%d, rf.log[len(rf.log) - 1].Term = %d\n", rf.me, len(rf.log), rf.log[len(rf.log)-1].Term)
 
 		for i := len(rf.log) - 1; i > 0; i-- {
 			if rf.log[i].Term != conflictTerm {
@@ -272,14 +271,14 @@ func (rf *Raft) AppendEntries(args *RequestAppendEntriesArgs, reply *RequestAppe
 				break
 			}
 		}
-		fmt.Printf("[%d] ***  ConflictIndex set to %d, rf.log[args.PrevLogIndex].Term = %d, rf.log[i-1:].Term=%d\n",
+		DPrintf("[%d] ***  ConflictIndex set to %d, rf.log[args.PrevLogIndex].Term = %d, rf.log[i-1:].Term=%d\n",
 			rf.me, reply.ConflictIndex, rf.log[args.PrevLogIndex].Term, rf.log[reply.ConflictIndex-1:])
 		reply.Success = false
 		reply.Term = rf.currentTerm
 
 		return
 	}
-	fmt.Printf("[%d] ***  Respond appending success to %d, PrevLogIndex=%d \n", rf.me, args.LeaderId, args.PrevLogIndex)
+	DPrintf("[%d] ***  Respond appending success to %d, PrevLogIndex=%d \n", rf.me, args.LeaderId, args.PrevLogIndex)
 
 	reply.Success = true
 	reply.Term = rf.currentTerm
@@ -287,11 +286,11 @@ func (rf *Raft) AppendEntries(args *RequestAppendEntriesArgs, reply *RequestAppe
 	next_log := args.PrevLogIndex + 1
 	// delete its own log and follow the leader
 	if len(rf.log) > next_log && rf.log[next_log].Term != args.Term {
-		fmt.Printf("[%d] *** Delete rf.log = rf.log[:next_log %d] ,rf.log[next_log-1:] is %v, and len(rf.log) is %d \n", rf.me, next_log, rf.log[next_log-1:], len(rf.log))
+		// DPrintf("[%d] *** Delete rf.log = rf.log[:next_log %d] ,rf.log[next_log-1:] is %v, and len(rf.log) is %d \n", rf.me, next_log, rf.log[next_log-1:], len(rf.log))
 		rf.log = rf.log[:next_log]
-		fmt.Printf("[%d] *** and Now len(rf.log) %d \n", rf.me, len(rf.log))
+		DPrintf("[%d] *** and Now len(rf.log) %d \n", rf.me, len(rf.log))
 	}
-	fmt.Printf("[%d] **** Leader%d commit=%d, rf.commitIndex=%d, lastApplied=%d\n",
+	DPrintf("[%d] **** Leader%d commit=%d, rf.commitIndex=%d, lastApplied=%d\n",
 		rf.me, args.LeaderId, args.LeaderCommit, rf.commitIndex, rf.lastApplied)
 
 	if len(args.Entries) > 0 {
@@ -304,7 +303,7 @@ func (rf *Raft) AppendEntries(args *RequestAppendEntriesArgs, reply *RequestAppe
 		}
 		rf.log = append(rf.log, entries...)
 	}
-	fmt.Printf("[%d] **** Appending log %v done, and len(rf.log) is %d, log is %v \n", rf.me, args.Entries, len(rf.log), rf.log)
+	DPrintf("[%d] **** Appending log %v done, and len(rf.log) is %d, log is %v \n", rf.me, args.Entries, len(rf.log), rf.log)
 
 	rf.update_commit(*args)
 
@@ -312,7 +311,7 @@ func (rf *Raft) AppendEntries(args *RequestAppendEntriesArgs, reply *RequestAppe
 func (rf *Raft) update_commit(args RequestAppendEntriesArgs) {
 	if args.LeaderCommit > rf.commitIndex {
 		rf.commitIndex = min(args.LeaderCommit, rf.getLastIndex())
-		fmt.Printf("[%d] **** rf.commitIndex = min(args.LeaderCommit %d, rf.getLastIndex() %d)\n",
+		DPrintf("[%d] **** rf.commitIndex = min(args.LeaderCommit %d, rf.getLastIndex() %d)\n",
 			rf.me, args.LeaderCommit, rf.getLastIndex())
 	}
 }
@@ -355,19 +354,19 @@ func (rf *Raft) replicator(i int) {
 	rf.replicator_cond[i].L.Lock()
 	defer rf.replicator_cond[i].L.Unlock()
 	for !rf.killed() {
-		// fmt.Printf("[%d] ** Replicator is waiting  \n", rf.me)
+		// DPrintf("[%d] ** Replicator is waiting  \n", rf.me)
 
 		rf.replicator_cond[i].Wait()
 		term := rf.currentTerm
 
-		// fmt.Printf("[%d] ** Replicator recieves signal  \n", rf.me)
+		// DPrintf("[%d] ** Replicator recieves signal  \n", rf.me)
 		for !rf.killed() && rf.currentTerm == term && rf.state == STATE_LEADER {
-			fmt.Printf("[%d] ** Send append entries to %d  \n", rf.me, i)
+			DPrintf("[%d] ** Send append entries to %d  \n", rf.me, i)
 
 			rf.sendHB(i, false)
 
 			rf.mu.Lock()
-			// fmt.Printf("[%d] ** replicator get lock %d  \n", rf.me, i)
+			// DPrintf("[%d] ** replicator get lock %d  \n", rf.me, i)
 
 			if !(rf.currentTerm == term && rf.state == STATE_LEADER) {
 
@@ -375,15 +374,15 @@ func (rf *Raft) replicator(i int) {
 				break
 			}
 			if rf.getLastIndex() >= rf.nextIndex[i] {
-				fmt.Printf("[%d] ** Update %d log, prevLogIndex= %d \n", rf.me, i, rf.nextIndex[i]-1)
-				// fmt.Printf("[%d] ** replicator unlock %d  \n", rf.me, i)
+				DPrintf("[%d] ** Update %d log, prevLogIndex= %d \n", rf.me, i, rf.nextIndex[i]-1)
+				// DPrintf("[%d] ** replicator unlock %d  \n", rf.me, i)
 
 				rf.mu.Unlock()
 
 			} else {
-				fmt.Printf("[%d] ## Machine %d up to date, send normal hb, len(entries)=%d\n",
+				DPrintf("[%d] ## Machine %d up to date, send normal hb, len(entries)=%d\n",
 					rf.me, i, len(rf.log[rf.nextIndex[i]:]))
-				// fmt.Printf("[%d] ** replicator unlock %d  \n", rf.me, i)
+				// DPrintf("[%d] ** replicator unlock %d  \n", rf.me, i)
 
 				rf.mu.Unlock()
 
@@ -397,7 +396,7 @@ func (rf *Raft) sendHB(i int, heartbeat bool) {
 	var args RequestAppendEntriesArgs
 	var prevLogIndex int
 	var prevLogTerm int
-	// fmt.Printf("[%d] #* send did not get lock\n", rf.me)
+	// DPrintf("[%d] #* send did not get lock\n", rf.me)
 
 	rf.mu.Lock()
 	if rf.state != STATE_LEADER {
@@ -405,12 +404,12 @@ func (rf *Raft) sendHB(i int, heartbeat bool) {
 		return
 	}
 	// TODO: Introduce a fatal bug
-	fmt.Printf("[%d] #* Send hb to %d, prevLogIndex= %d, len(rf.log) %d\n",
+	DPrintf("[%d] #* Send hb to %d, prevLogIndex= %d, len(rf.log) %d\n",
 		rf.me, i, rf.nextIndex[i]-1, len(rf.log))
 	prevLogIndex = rf.nextIndex[i] - 1
 	prevLogTerm = rf.getIndexTerm(prevLogIndex)
 
-	fmt.Printf("[%d] #* Send normal hb to %d, prevLogIndex= %d, len(rf.log) %d, Entries %v\n",
+	DPrintf("[%d] #* Send normal hb to %d, prevLogIndex= %d, len(rf.log) %d, Entries %v\n",
 		rf.me, i, prevLogIndex, len(rf.log), rf.log[prevLogIndex+1:])
 	args = RequestAppendEntriesArgs{
 		Term:         rf.currentTerm,
@@ -422,11 +421,11 @@ func (rf *Raft) sendHB(i int, heartbeat bool) {
 	reply := RequestAppendEntriesReply{}
 
 	rf.mu.Unlock()
-	// fmt.Printf("[%d] #* send HB unlock\n", rf.me)
+	// DPrintf("[%d] #* send HB unlock\n", rf.me)
 
 	ok := rf.sendHeartBeat(i, &args, &reply)
 	if !ok {
-		fmt.Printf("[%d] #* sendHeartBeat not ok from %d \n", rf.me, i)
+		DPrintf("[%d] #* sendHeartBeat not ok from %d \n", rf.me, i)
 		return
 	}
 	rf.mu.Lock()
@@ -434,11 +433,11 @@ func (rf *Raft) sendHB(i int, heartbeat bool) {
 
 	// Does it need to lock on and check if rf.currentTerm > term?
 	if reply.Term > rf.currentTerm {
-		fmt.Printf("[%d] ** Turn to follower, recieved from machine%d, reply.Term %d > rf.currentTerm %d\n",
+		DPrintf("[%d] ** Turn to follower, recieved from machine%d, reply.Term %d > rf.currentTerm %d\n",
 			rf.me, i, reply.Term, rf.currentTerm)
 		rf.currentTerm = reply.Term
 		rf.ChangeState(STATE_FOLLOWER)
-		fmt.Printf("[%d] ** Turn to follower, when sendHB  persist\n", rf.me)
+		DPrintf("[%d] ** Turn to follower, when sendHB  persist\n", rf.me)
 		rf.persist()
 		return
 	}
@@ -453,19 +452,19 @@ func (rf *Raft) sendHB(i int, heartbeat bool) {
 		rf.nextIndex[i] = max(prevLogIndex+1+len(args.Entries), reply.ConflictIndex)
 
 		if len(args.Entries) > 0 {
-			fmt.Printf("[%d] ** Machine%d reply success, matchIndex=%d, nextIndex=%d, len(args.Entries)=%d \n", rf.me, i, rf.matchIndex[i], rf.nextIndex[i], len(args.Entries))
+			DPrintf("[%d] ** Machine%d reply success, matchIndex=%d, nextIndex=%d, len(args.Entries)=%d \n", rf.me, i, rf.matchIndex[i], rf.nextIndex[i], len(args.Entries))
 		}
 	} else {
 		if rf.nextIndex[i] < 1 {
-			fmt.Printf("[%d] ** FATAL: rf.nextIndex[i] < 0, args:%v, reply: %v \n",
+			DPrintf("[%d] ** FATAL: rf.nextIndex[i] < 0, args:%v, reply: %v \n",
 				rf.me, args, reply)
 		}
 		rf.nextIndex[i] = reply.ConflictIndex
 		// rf.nextIndex[i] = prevLogIndex
-		fmt.Printf("[%d] ** Failed to update %d log, rf.nextIndex set to ConflictIndex %d \n", rf.me, i, rf.nextIndex[i])
+		DPrintf("[%d] ** Failed to update %d log, rf.nextIndex set to ConflictIndex %d \n", rf.me, i, rf.nextIndex[i])
 	}
 	rf.persist()
-	fmt.Printf("[%d] ** success when sendHB  persist\n", rf.me)
+	DPrintf("[%d] ** success when sendHB  persist\n", rf.me)
 
 }
 
@@ -499,12 +498,12 @@ func (rf *Raft) findLargestcommitIndex() int {
 
 			break
 		} else if rf.log[n].Term > rf.currentTerm {
-			fmt.Printf("[%d] * rf.log[n].Term %d> rf.currentTerm %d\n", rf.me, rf.log[n].Term, rf.currentTerm)
+			DPrintf("[%d] * rf.log[n].Term %d> rf.currentTerm %d\n", rf.me, rf.log[n].Term, rf.currentTerm)
 
 			break
 		} else if rf.log[n].Term == rf.currentTerm && (float64(c+1) >= float64(len(rf.peers))/2) {
 			last = n
-			fmt.Printf("[%d] * Majority sent of %d, matchindex=%v, c=%d\n", rf.me, last, rf.matchIndex, c)
+			DPrintf("[%d] * Majority sent of %d, matchindex=%v, c=%d\n", rf.me, last, rf.matchIndex, c)
 
 		} else if rf.log[n].Term < rf.currentTerm {
 			n += 1
@@ -514,12 +513,12 @@ func (rf *Raft) findLargestcommitIndex() int {
 		}
 		n += 1
 	}
-	fmt.Printf("[%d] * The largest commitIndex set to %d, current term %d\n", rf.me, last, rf.currentTerm)
+	DPrintf("[%d] * The largest commitIndex set to %d, current term %d\n", rf.me, last, rf.currentTerm)
 	return last
 }
 
 func (rf *Raft) handle(command interface{}) {
-	fmt.Printf("[%d] * Handle client's message %v, log is %v, my last is %d\n", rf.me, command, rf.log, rf.getLastIndex())
+	DPrintf("[%d] * Handle client's message %v, log is %v, my last is %d\n", rf.me, command, rf.log, rf.getLastIndex())
 
 	for i := range rf.peers {
 		if i != rf.me {
@@ -556,14 +555,14 @@ func (rf *Raft) applier() {
 		commitIndex := min(rf.commitIndex, len(rf.log)-1)
 
 		for i := rf.lastApplied + 1; i <= commitIndex; i++ {
-			fmt.Printf("[%d] $ Apply index %d, rf.commitIndex is %d, command %v\n, log is %v\n", rf.me, i, commitIndex, rf.log[i], rf.log)
+			DPrintf("[%d] $ Apply index %d, rf.commitIndex is %d, command %v\n, log is %v\n", rf.me, i, commitIndex, rf.log[i], rf.log)
 			msg := ApplyMsg{CommandValid: true, Command: rf.log[i].Message, CommandIndex: i}
 			rf.applyCh <- msg
 			rf.lastApplied = i
-			fmt.Printf("[%d] $ lastApplied set to %d\n", rf.me, i)
+			DPrintf("[%d] $ lastApplied set to %d\n", rf.me, i)
 		}
 		rf.mu.Unlock()
-		time.Sleep(apply_detect_interval)
+		// time.Sleep(apply_detect_interval)
 	}
 }
 
@@ -576,12 +575,12 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		return -1, -1, false
 	}
 	// Your code here (2B).
-	// fmt.Printf("[%d] * Handle get lock %v\n", rf.me, command)
+	// DPrintf("[%d] * Handle get lock %v\n", rf.me, command)
 	rf.log = append(rf.log, entry{Term: rf.currentTerm, Message: command})
 	index := rf.getLastIndex()
-	fmt.Printf("[%d] *Client's message %v, index=%d, term=%d\n", rf.me, command, index, term)
+	DPrintf("[%d] *Client's message %v, index=%d, term=%d\n", rf.me, command, index, term)
 	rf.persist()
-	// fmt.Printf("[%d] ** start  persist\n", rf.me)
+	// DPrintf("[%d] ** start  persist\n", rf.me)
 
 	go rf.handle(command)
 
@@ -603,7 +602,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 func (rf *Raft) Kill() {
 	atomic.StoreInt32(&rf.dead, 1)
 	// Your code here, if desired.
-	fmt.Printf("[%d] /// rf.state=%d, rf.currentTerm=%d, len(rf.log)=%d, commitIndex=%d, matchIndex=%v, lastApplied=%d, log is %v\n",
+	DPrintf("[%d] /// rf.state=%d, rf.currentTerm=%d, len(rf.log)=%d, commitIndex=%d, matchIndex=%v, lastApplied=%d, log is %v\n",
 		rf.me, rf.state, rf.currentTerm, len(rf.log), rf.commitIndex, rf.matchIndex, rf.lastApplied, rf.log)
 
 }
