@@ -15,12 +15,12 @@ func DPrintf(format string, a ...interface{}) (n int, err error) {
 }
 
 const (
-	OK              = "OK"
-	ErrNoKey        = "ErrNoKey"
-	ErrWrongLeader  = "ErrWrongLeader"
-	ErrApplyTimeout = "ErrApplyTimeout"
-	// WaitCmdTimeout  = 50 * time.Millisecond
-	WaitCmdTimeout = 2 * time.Second
+	OK                 = "OK"
+	ErrNoKey           = "ErrNoKey"
+	ErrWrongLeader     = "ErrWrongLeader"
+	ErrApplyTimeout    = "ErrApplyTimeout"
+	ClientWaitInterval = 20 * time.Millisecond
+	WaitCmdTimeout     = 2 * time.Second
 )
 
 type Err string

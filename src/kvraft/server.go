@@ -1,6 +1,7 @@
 package kvraft
 
 import (
+	"bytes"
 	"labs/src/labgob"
 	"labs/src/labrpc"
 	"labs/src/raft"
@@ -41,7 +42,9 @@ type KVServer struct {
 	stateMachine    machine
 	lastSeqMapping  map[int64]int64 // lastSeq[clientID]
 	notifyChMapping map[notifyKey]chan notifyMsg
-	maxraftstate    int // snapshot if log grows this big
+
+	persister    *raft.Persister
+	maxraftstate int // snapshot if log grows this big
 
 	// Your definitions here.
 }
@@ -90,15 +93,17 @@ func (kv *KVServer) waitCmdApply(op Op) (string, Err) {
 	var res notifyMsg
 	select {
 	case res = <-ch:
-		DPrintf("(%d)  --- Res <- ch %v", kv.me, res.Value)
+		DPrintf("(%d)  --- Res <- ch %v, op %v", kv.me, res.Value, op)
 		kv.mu.Lock()
+		//DPrintf("(%d)  --- Res <- ch %v delete op %v", kv.me, res.Value, op)
 		delete(kv.notifyChMapping, key)
 		kv.mu.Unlock()
 		return res.Value, ""
 	case <-time.After(WaitCmdTimeout):
-		DPrintf("(%d)  --- Timeout %v", kv.me, op)
+		DPrintf("(%d)  --- Timeout op %v", kv.me, op)
 
 		kv.mu.Lock()
+		//DPrintf("(%d)  --- Timeout delete op %v", kv.me, op)
 		delete(kv.notifyChMapping, key)
 		kv.mu.Unlock()
 		return "", ErrApplyTimeout
@@ -134,53 +139,64 @@ func (kv *KVServer) applyDeamon() {
 				continue
 			}
 			kv.mu.Lock()
-			op := msg.Command.(Op)
-			index := msg.CommandIndex
-			// last, _ := kv.lastSeqMapping[op.ClientID]
-			term, _ := kv.rf.GetState()
-			key := notifyKey{term: term, index: index}
 
-			var v string
+			if !msg.CommandValid || msg.Command == "Snapshot" {
+				DPrintf("(%d) |||| ReadPersist", kv.me)
+				kv.readPersist(kv.persister.ReadSnapshot())
+				kv.mu.Unlock()
 
-			repeat := op.Seq <= kv.lastSeqMapping[op.ClientID]
-			DPrintf("(%d) ! Index %d, msg client %v, seq %d, kv.lastSeqMapping[op.ClientID] %v", kv.me, index, op.ClientID, op.Seq, kv.lastSeqMapping[op.ClientID])
-			if !repeat {
-				kv.lastSeqMapping[op.ClientID] = op.Seq
-			}
-
-			switch op.Op {
-
-			case "Put":
-				if !repeat {
-					kv.stateMachine.mapping[op.Key] = op.Value
-					DPrintf("(%d) !!!Apply Put[%v] = %v", kv.me, op.Key, op.Value)
-				}
-			case "Append":
-				if !repeat {
-					kv.stateMachine.mapping[op.Key] += op.Value
-					v = kv.stateMachine.mapping[op.Key]
-					DPrintf("(%d) !!!Apply App[%v] = %v", kv.me, op.Key, v)
-				}
-			case "Get":
-				v = kv.stateMachine.mapping[op.Key]
-				// if !exist {
-				// 	v = ""
-				// }
-				DPrintf("(%d) !!!Apply Get[%v] = %v", kv.me, op.Key, v)
-
-			default:
-				DPrintf("(%d) ~~~~~~FATAL~~~~~~~~~~~~~ %v", kv.me, op.Op)
-
-			}
-
-			if ch, ok := kv.notifyChMapping[key]; ok {
-				DPrintf("(%d) !!!! ch <- Value %v", kv.me, v)
-				ch <- notifyMsg{Value: v}
-				// DPrintf("(%d) !?? Index %d, msg client %v, seq %d, kv.lastSeqMapping[op.ClientID] %v", kv.me, index, op.ClientID, op.Seq, kv.lastSeqMapping[op.ClientID])
 			} else {
-				// DPrintf("(%d) !?? Index %d, channel not exist", kv.me, index)
+				op := msg.Command.(Op)
+				index := msg.CommandIndex
+				// last, _ := kv.lastSeqMapping[op.ClientID]
+				term, _ := kv.rf.GetState()
+				key := notifyKey{term: term, index: index}
+
+				var v string
+
+				repeat := op.Seq <= kv.lastSeqMapping[op.ClientID]
+				//DPrintf("(%d) ! Index %d, msg client %v, seq %d, kv.lastSeqMapping[op.ClientID] %v", kv.me, index, op.ClientID, op.Seq, kv.lastSeqMapping[op.ClientID])
+				//if !repeat {
+				kv.lastSeqMapping[op.ClientID] = op.Seq
+				//}
+
+				switch op.Op {
+
+				case "Put":
+					if !repeat {
+						kv.stateMachine.mapping[op.Key] = op.Value
+						//DPrintf("(%d) !!!Apply Put[%v] = %v --- ck %v, seq %v", kv.me, op.Key, op.Value, op.ClientID, op.Seq)
+					}
+				case "Append":
+					if !repeat {
+						kv.stateMachine.mapping[op.Key] += op.Value
+						v = kv.stateMachine.mapping[op.Key]
+						//DPrintf("(%d) !!!Apply App[%v] = %v --- ck %v, seq %v", kv.me, op.Key, v, op.ClientID, op.Seq)
+					}
+				case "Get":
+					v = kv.stateMachine.mapping[op.Key]
+					// if !exist {
+					// 	v = ""
+					// }
+					//DPrintf("(%d) !!!Apply Get[%v] = %v", kv.me, op.Key, v)
+
+				default:
+					DPrintf("(%d) ~~~~~~FATAL~~~~~~~~~~~~~ %v", kv.me, op.Op)
+
+				}
+				if ch, ok := kv.notifyChMapping[key]; ok {
+					DPrintf("(%d) !!!! ch <- Value %v", kv.me, v)
+					ch <- notifyMsg{Value: v}
+					// DPrintf("(%d) !?? Index %d, msg client %v, seq %d, kv.lastSeqMapping[op.ClientID] %v", kv.me, index, op.ClientID, op.Seq, kv.lastSeqMapping[op.ClientID])
+				} else {
+					// DPrintf("(%d) !?? Index %d, channel not exist", kv.me, index)
+				}
+				//DPrintf("(%d) lock to save snap", kv.me)
+				kv.saveSnapshot(index)
+				kv.mu.Unlock()
+				//DPrintf("(%d) unlock to save snap", kv.me)
+
 			}
-			kv.mu.Unlock()
 		}
 	}
 }
@@ -206,6 +222,7 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 
 	kv := new(KVServer)
 	kv.me = me
+	kv.persister = persister
 	kv.maxraftstate = maxraftstate
 
 	// You may need initialization code here.
@@ -213,6 +230,7 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	kv.applyCh = make(chan raft.ApplyMsg)
 	kv.notifyChMapping = map[notifyKey]chan notifyMsg{}
 	kv.lastSeqMapping = map[int64]int64{}
+	kv.readPersist(kv.persister.ReadSnapshot())
 
 	kv.applyCh = make(chan raft.ApplyMsg)
 	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
@@ -220,4 +238,47 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	// You may need initialization code here.
 	go kv.applyDeamon()
 	return kv
+}
+
+const rate = 0.9
+
+func (kv *KVServer) saveSnapshot(appliedId int) {
+	if kv.maxraftstate == -1 {
+		return
+	}
+	if float32(kv.persister.RaftStateSize()) > float32(kv.maxraftstate)*rate {
+		data := kv.encodeSnapshot()
+		kv.rf.SaveSnapshotWithState(appliedId, data)
+		//fmt.Printf("{%d} Server snapshot  finish %v > %v\n", kv.me, float32(kv.persister.RaftStateSize()), float32(kv.maxraftstate)*rate)
+
+	}
+	return
+}
+
+func (kv *KVServer) encodeSnapshot() []byte {
+	w := new(bytes.Buffer)
+	e := labgob.NewEncoder(w)
+	e.Encode(kv.stateMachine.mapping)
+	e.Encode(kv.lastSeqMapping)
+	return w.Bytes()
+}
+
+func (kv *KVServer) readPersist(data []byte) {
+	if data == nil || len(data) < 1 { // bootstrap without any state?
+		return
+	}
+
+	r := bytes.NewBuffer(data)
+	d := labgob.NewDecoder(r)
+
+	var kvData map[string]string
+	var lastSeq map[int64]int64
+
+	if d.Decode(&kvData) != nil ||
+		d.Decode(&lastSeq) != nil {
+		DPrintf("{%d} FATAL, readPersist failed", kv.me)
+	} else {
+		kv.stateMachine.mapping = kvData
+		kv.lastSeqMapping = lastSeq
+	}
 }

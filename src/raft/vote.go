@@ -59,7 +59,7 @@ func (rf *Raft) ChangeState(state int) {
 		}
 
 		rf.state = STATE_LEADER
-		// No-op ////////////////////////////////////
+		/////////////// No-op <To pass Lab2 you need to annotate the following part> ///////////////
 		rf.log = append(rf.log, entry{Term: rf.currentTerm, Message: nil})
 		rf.persist()
 		DPrintf("[%d] Being a Leader NO-OP %d \n", rf.me, rf.commitIndex+1)
@@ -70,18 +70,7 @@ func (rf *Raft) ChangeState(state int) {
 		}
 		time.Sleep(heartbeat_timeout)
 		rf.commitIndex = rf.findLargestcommitIndex()
-
-		// commitIndex := min(rf.commitIndex, len(rf.log)-1)
-
-		// for i := rf.lastApplied + 1; i <= commitIndex; i++ {
-		// 	DPrintf("[%d] $ Apply index %d, rf.commitIndex is %d, command %v\n, log is %v\n", rf.me, i, commitIndex, rf.log[i], rf.log)
-		// 	msg := ApplyMsg{CommandValid: true, Command: rf.log[i].Message, CommandIndex: i}
-		// 	rf.applyCh <- msg
-		// 	rf.lastApplied = i
-		// 	DPrintf("[%d] $ lastApplied set to %d\n", rf.me, i)
-		// }
-
-		////////////////////////////////////////////
+		///////////////////////////////////////////////////////////////////////////////////////////
 		rf.leader_cond.Signal()
 
 	}
@@ -195,33 +184,6 @@ func (rf *Raft) raiseElection() {
 		go rf.request(args, i, &count, &count_lock)
 	}
 
-	// time.Sleep(election_timout_minimun)
-	// DPrintf("[%d] - Poll count: %d\n", rf.me, count)
-
-	// rf.mu.Lock()
-	// defer rf.mu.Unlock()
-
-	// // defer DPrintf("[%d] --- raise election unlock \n", rf.me)
-
-	// // DPrintf("[%d] --- raise election lock \n", rf.me)
-
-	// if rf.state != STATE_CANDIDATE {
-	// 	// DPrintf("[%d] --- raise election unlock \n", rf.me)
-	// 	DPrintf("[%d] --- Return because state is %d \n", rf.me, rf.state)
-	// 	return
-	// }
-	// if count+1 > len(rf.peers)/2 {
-	// 	// if rf.state == STATE_FOLLOWER {
-	// 	// 	DPrintf("[%d] - FATAL: FALL TO FOLLOWER BUT RECIEVE OVER HALF POLLS!\n", rf.me)
-	// 	// }
-	// 	DPrintf("[%d] - Being a leader at term, log is %v %d\n", rf.me, rf.currentTerm, rf.log)
-
-	// 	rf.ChangeState(STATE_LEADER)
-	// 	defer DPrintf("[%d]  vote enough  persist\n", rf.me)
-
-	// 	rf.persist()
-	// 	return
-	// }
 	for time.Since(raise_start) < election_timout_minimun*time.Millisecond {
 		rf.mu.Lock()
 		// DPrintf("[%d] --- raise election lock \n", rf.me)
@@ -292,7 +254,7 @@ func (rf *Raft) leader_hb() {
 				if i == rf.me {
 					continue
 				}
-				go rf.sendHB(i, true)
+				go rf.sendHB(i)
 			}
 			rf.mu.Lock()
 			rf.commitIndex = rf.findLargestcommitIndex()

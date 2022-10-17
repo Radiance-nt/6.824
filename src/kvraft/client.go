@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"labs/src/labrpc"
 	"math/big"
+	"time"
 )
 
 type Clerk struct {
@@ -27,6 +28,8 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 	ck.clientID = nrand()
 	ck.seq = 1
 	// You'll have to add code here.
+	//fmt.Printf("{%d} @ New clerk\n", ck.clientID%1000)
+
 	return ck
 }
 
@@ -45,21 +48,21 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 func (ck *Clerk) Get(key string) string {
 	args := GetArgs{Key: key, ClientID: ck.clientID, Seq: ck.seq}
 	ck.seq += 1
-	DPrintf("{%d} get k: %v", ck.clientID, key)
+	//DPrintf("{%d} get k: %v", ck.clientID%1000000, key)
 	reply := GetReply{}
 
 	// for count := 0; count < len(ck.servers); count++ {
 	for {
 		reply.Err = ""
 		ok := ck.servers[ck.leaderID].Call("KVServer.Get", &args, &reply)
-		if !ok || reply.Err == ErrWrongLeader {
+		if !ok || reply.Err == ErrWrongLeader || reply.Err == ErrApplyTimeout {
+			//DPrintf("{%d} @ [%d] Seq %v, ok: %v, err: %v ", ck.clientID%1000000, ck.leaderID, args.Seq, ok, reply.Err)
 			ck.leaderID = (ck.leaderID + 1) % len(ck.servers)
-			continue
-		} else if reply.Err == ErrApplyTimeout {
-			ck.leaderID = (ck.leaderID + 1) % len(ck.servers)
+			time.Sleep(ClientWaitInterval)
 			continue
 		}
-		DPrintf("{%d} @ [%d] Get k: %v, v: %v", ck.clientID, ck.leaderID, key, reply.Value)
+		DPrintf("{%d} @ [%d] Get k: %v, v: %v", ck.clientID%1000000, ck.leaderID, key, reply.Value)
+		//fmt.Printf("{%d} @ [%d] Get k: %v, v: %v\n", ck.clientID, ck.leaderID, key, reply.Value)
 		break
 	}
 	// You will have to modify this function.
@@ -81,22 +84,21 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 	args := PutAppendArgs{Key: key, Value: value, Op: op, ClientID: ck.clientID, Seq: ck.seq}
 	ck.seq += 1
 	reply := PutAppendReply{}
-	DPrintf("{%d} put k: %v, v: %v", ck.clientID, key, value)
+	//DPrintf("{%d} put k: %v, v: %v", ck.clientID%1000000, key, value)
 
 	// for count := 0; count < len(ck.servers); count++ {
 	for {
 		reply.Err = ""
 
 		ok := ck.servers[ck.leaderID].Call("KVServer.PutAppend", &args, &reply)
-		if !ok || reply.Err == ErrWrongLeader {
+		if !ok || reply.Err == ErrWrongLeader || reply.Err == ErrApplyTimeout {
+			//DPrintf("{%d} @ [%d] Seq %v, ok: %v, err: %v ", ck.clientID%1000000, ck.leaderID, args.Seq, ok, reply.Err)
 			ck.leaderID = (ck.leaderID + 1) % len(ck.servers)
-			continue
-		} else if reply.Err == ErrApplyTimeout {
-			ck.leaderID = (ck.leaderID + 1) % len(ck.servers)
-
+			time.Sleep(ClientWaitInterval)
 			continue
 		}
-		DPrintf("{%d} @ [%d] Put k: %v, v: %v", ck.clientID, ck.leaderID, key, value)
+		DPrintf("{%d} @ [%d] Put k: %v, v: %v", ck.clientID%1000000, ck.leaderID, key, value)
+		//fmt.Printf("{%d} @ [%d] Put k: %v, v: %v\n", ck.clientID, ck.leaderID, key, value)
 		break
 	}
 }
