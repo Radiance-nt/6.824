@@ -1,5 +1,7 @@
 package shardmaster
 
+import "time"
+
 //
 // Master shard server: assigns shards to replication groups.
 //
@@ -29,45 +31,53 @@ type Config struct {
 }
 
 const (
-	OK = "OK"
+	OK                 = "OK"
+	ErrWrongLeader     = "ErrWrongLeader"
+	ErrApplyTimeout    = "ErrApplyTimeout"
+	ClientWaitInterval = 20 * time.Millisecond
+	WaitCmdTimeout     = 2 * time.Second
 )
 
 type Err string
 
 type JoinArgs struct {
-	Servers map[int][]string // new GID -> servers mappings
+	Servers  map[int][]string // new GID -> servers mappings
+	ClientId int64
+	Seq      int64
 }
 
 type JoinReply struct {
-	WrongLeader bool
-	Err         Err
+	Err Err
 }
 
 type LeaveArgs struct {
-	GIDs []int
+	GIDs     []int
+	ClientId int64
+	Seq      int64
 }
 
 type LeaveReply struct {
-	WrongLeader bool
-	Err         Err
+	Err Err
 }
 
 type MoveArgs struct {
-	Shard int
-	GID   int
+	Shard    int
+	GID      int
+	ClientId int64
+	Seq      int64
 }
 
 type MoveReply struct {
-	WrongLeader bool
-	Err         Err
+	Err Err
 }
 
 type QueryArgs struct {
-	Num int // desired config number
+	Num      int // desired config number
+	ClientId int64
+	Seq      int64
 }
 
 type QueryReply struct {
-	WrongLeader bool
-	Err         Err
-	Config      Config
+	Err    Err
+	Config Config
 }
