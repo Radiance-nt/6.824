@@ -8,10 +8,12 @@ package shardkv
 // talks to the group that holds the key's shard.
 //
 
-import "../labrpc"
+import (
+	"labs/src/labrpc"
+)
 import "crypto/rand"
 import "math/big"
-import "../shardmaster"
+import "labs/src/shardmaster"
 import "time"
 
 //
@@ -40,6 +42,9 @@ type Clerk struct {
 	config   shardmaster.Config
 	make_end func(string) *labrpc.ClientEnd
 	// You will have to modify this struct.
+	clientID      int64
+	seq           int64
+	groupLeaderID map[int]int
 }
 
 //
@@ -56,6 +61,9 @@ func MakeClerk(masters []*labrpc.ClientEnd, make_end func(string) *labrpc.Client
 	ck.sm = shardmaster.MakeClerk(masters)
 	ck.make_end = make_end
 	// You'll have to add code here.
+	ck.clientID = nrand()
+	ck.seq = 1
+	ck.groupLeaderID = make(map[int]int)
 	return ck
 }
 
@@ -66,33 +74,47 @@ func MakeClerk(masters []*labrpc.ClientEnd, make_end func(string) *labrpc.Client
 // You will have to modify this function.
 //
 func (ck *Clerk) Get(key string) string {
-	args := GetArgs{}
-	args.Key = key
+	//ck.seq += 1
+	args := GetArgs{
+		Key:      key,
+		ClientID: ck.clientID,
+		Seq:      ck.seq,
+	}
+	ck.seq += 1
 
+	reply := GetReply{}
 	for {
 		shard := key2shard(key)
 		gid := ck.config.Shards[shard]
 		if servers, ok := ck.config.Groups[gid]; ok {
-			// try each server for the shard.
-			for si := 0; si < len(servers); si++ {
-				srv := ck.make_end(servers[si])
-				var reply GetReply
+			if _, ok := ck.groupLeaderID[gid]; !ok {
+				ck.groupLeaderID[gid] = 0
+			}
+		Loop:
+			for count := 0; count < len(servers); count++ {
+				srv := ck.make_end(servers[ck.groupLeaderID[gid]])
 				ok := srv.Call("ShardKV.Get", &args, &reply)
-				if ok && (reply.Err == OK || reply.Err == ErrNoKey) {
+				if !ok {
+					ck.groupLeaderID[gid] = (ck.groupLeaderID[gid] + 1) % len(servers)
+					continue
+				}
+				switch reply.Err {
+				case OK:
 					return reply.Value
+				case ErrWrongLeader, ErrApplyTimeout:
+					ck.groupLeaderID[gid] = (ck.groupLeaderID[gid] + 1) % len(servers)
+					continue
+				case ErrWrongGroup:
+					break Loop
+				default:
+					panic("Error")
 				}
-				if ok && (reply.Err == ErrWrongGroup) {
-					break
-				}
-				// ... not ok, or ErrWrongLeader
 			}
 		}
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(ClientWaitInterval)
 		// ask master for the latest configuration.
 		ck.config = ck.sm.Query(-1)
 	}
-
-	return ""
 }
 
 //
@@ -100,31 +122,47 @@ func (ck *Clerk) Get(key string) string {
 // You will have to modify this function.
 //
 func (ck *Clerk) PutAppend(key string, value string, op string) {
-	args := PutAppendArgs{}
-	args.Key = key
-	args.Value = value
-	args.Op = op
+	//ck.seq += 1
+	args := PutAppendArgs{
+		Key:      key,
+		Value:    value,
+		Op:       op,
+		ClientID: ck.clientID,
+		Seq:      ck.seq,
+	}
+	ck.seq += 1
 
-
+	reply := PutAppendReply{}
 	for {
 		shard := key2shard(key)
 		gid := ck.config.Shards[shard]
 		if servers, ok := ck.config.Groups[gid]; ok {
-			for si := 0; si < len(servers); si++ {
-				srv := ck.make_end(servers[si])
-				var reply PutAppendReply
+			if _, ok := ck.groupLeaderID[gid]; !ok {
+				ck.groupLeaderID[gid] = 0
+			}
+		Loop:
+			for count := 0; count < len(servers); count++ {
+				srv := ck.make_end(servers[ck.groupLeaderID[gid]])
 				ok := srv.Call("ShardKV.PutAppend", &args, &reply)
-				if ok && reply.Err == OK {
+				if !ok {
+					ck.groupLeaderID[gid] = (ck.groupLeaderID[gid] + 1) % len(servers)
+					continue
+				}
+				switch reply.Err {
+				case OK:
 					return
+				case ErrWrongLeader, ErrApplyTimeout:
+					ck.groupLeaderID[gid] = (ck.groupLeaderID[gid] + 1) % len(servers)
+					continue
+				case ErrWrongGroup:
+					break Loop
+				default:
+					panic("Error")
 				}
-				if ok && reply.Err == ErrWrongGroup {
-					break
-				}
-				// ... not ok, or ErrWrongLeader
+
 			}
 		}
-		time.Sleep(100 * time.Millisecond)
-		// ask master for the latest configuration.
+		time.Sleep(ClientWaitInterval)
 		ck.config = ck.sm.Query(-1)
 	}
 }
